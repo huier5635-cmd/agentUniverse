@@ -1,0 +1,73 @@
+name: Grouped PowerPoint native validation
+on:
+  push:
+    branches: [ci/powerpoint-group-read]
+permissions: {}
+jobs:
+  linux-powerpoint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 5
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Verify pinned source and regression blobs
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = a0309f3cddf98555822cff32817eb0c844d5c661
+          test "$(git rev-parse 'HEAD^'^{tree})" = aa13d4947081ba1dd78ab72aa417dcee165fdec1
+          test "$(git hash-object .ci/powerpoint-group-read/standalone.py)" = 6a2fe6b91e20616b7f28601474b3856715f51558
+          test "$(git hash-object tests/test_agentuniverse/unit/agent/action/tool/test_powerpoint_group_read.py)" = 7d82d80b984aa421e9233a0d335e9363743e6721
+          test "$(git hash-object agentuniverse/agent/action/tool/common_tool/powerpoint_tool.py)" = 6b8bafb5fdf081a4a8693677fdb6dbeb05cea648
+      - name: Install isolated native SDK test stack
+        run: |
+          python -m pip install pytest==8.3.5 pydantic==2.6.4 langchain==0.1.20 langchain-community==0.0.38 loguru==0.7.2 tomli==2.2.1 opentelemetry-sdk==1.25.0 python-docx==1.2.0 python-pptx==1.0.2
+          python -c "import sys,os,docx,pptx,pydantic; print(sys.version,os.name,docx.__version__,pptx.__version__,pydantic.__version__)"
+      - name: Reproduce grouped omissions on the exact unchanged source
+        env:
+          PYTHONPATH: .
+        run: |
+          set -euo pipefail
+          source=agentuniverse/agent/action/tool/common_tool/powerpoint_tool.py
+          git show 93ac9e214ba626c7c8fea68f66bca239963ed3c9:$source > "$source"
+          set +e
+          python -m pytest -q -o addopts= -p no:cacheprovider --tb=short tests/test_agentuniverse/unit/agent/action/tool/test_powerpoint_group_read.py > baseline.log 2>&1
+          result=$?
+          set -e
+          cat baseline.log
+          test "$result" -eq 1
+          grep -F '18 failed, 5 passed' baseline.log
+          cp .ci/powerpoint-group-read/standalone.py "$source"
+      - name: Run all PowerPoint cases on the standalone group-read fix
+        env:
+          PYTHONPATH: .
+        run: |
+          set -euo pipefail
+          python -m pytest -q -rA -o addopts= -p no:cacheprovider --tb=short --junitxml=group-results.xml tests/test_agentuniverse/unit/agent/action/tool/test_powerpoint_group_read.py tests/test_agentuniverse/unit/agent/action/tool/test_powerpoint_tool.py
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          suites = ET.parse('group-results.xml').getroot().findall('.//testsuite')
+          counts = {key: sum(int(suite.get(key, 0)) for suite in suites) for key in ['tests', 'failures', 'errors', 'skipped']}
+          print(counts)
+          assert counts == {'tests': 61, 'failures': 0, 'errors': 0, 'skipped': 0}, counts
+          PY
+          git restore --source=HEAD -- agentuniverse/agent/action/tool/common_tool/powerpoint_tool.py
+      - name: Run all document cases combined with the unchanged 3728 publication fix
+        env:
+          PYTHONPATH: .
+        run: |
+          set -euo pipefail
+          python -m pytest -q -rA -o addopts= -p no:cacheprovider --tb=short --junitxml=combined-results.xml tests/test_agentuniverse/unit/agent/action/tool/test_powerpoint_group_read.py tests/test_agentuniverse/unit/agent/action/tool/test_document_create_race.py tests/test_agentuniverse/unit/agent/action/tool/test_word_document_tool.py tests/test_agentuniverse/unit/agent/action/tool/test_powerpoint_tool.py tests/test_agentuniverse/unit/agent/action/tool/test_atomic_file_publish.py
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          suites = ET.parse('combined-results.xml').getroot().findall('.//testsuite')
+          counts = {key: sum(int(suite.get(key, 0)) for suite in suites) for key in ['tests', 'failures', 'errors', 'skipped']}
+          print(counts)
+          assert counts == {'tests': 100, 'failures': 0, 'errors': 0, 'skipped': 0}, counts
+          PY
+          git diff 93ac9e214ba626c7c8fea68f66bca239963ed3c9 HEAD --check
+          git diff --exit-code HEAD -- agentuniverse tests
