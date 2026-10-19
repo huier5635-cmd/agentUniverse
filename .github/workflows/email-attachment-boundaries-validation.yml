@@ -1,0 +1,57 @@
+name: Native MIME attachment validation
+on:
+  push:
+    branches: [ci/email-attachment-boundaries-final]
+permissions: {}
+jobs:
+  python310-email:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 5
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Verify exact proposed source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = cb2383880ab9affc5fccb6fff7d26a3468c6e252
+          test "$(git rev-parse 'HEAD^'^{tree})" = b9c775748ac576afe538671e1012cf9c1e85d742
+          test "$(git diff --name-only HEAD^ HEAD)" = .github/workflows/email-attachment-boundaries-validation.yml
+      - name: Install isolated native test stack
+        run: |
+          python -m pip install pytest==8.3.5 pydantic==2.6.4 langchain==0.1.20 langchain-community==0.0.38 loguru==0.7.2 tomli==2.2.1 opentelemetry-sdk==1.25.0
+          python -c "import sys,pydantic,email; print(sys.version,pydantic.__version__,email.__file__)"
+      - name: Reproduce the unchanged source corrupting composite attachments
+        env:
+          PYTHONPATH: .
+        run: |
+          set -euo pipefail
+          source=agentuniverse/agent/action/tool/common_tool/email_document_tool.py
+          git show 93ac9e214ba626c7c8fea68f66bca239963ed3c9:$source > "$source"
+          set +e
+          python -m pytest -q -o addopts= -p no:cacheprovider --tb=short tests/test_agentuniverse/unit/agent/action/tool/test_email_attachment_boundaries.py > baseline.log 2>&1
+          result=$?
+          set -e
+          git restore --source=HEAD -- "$source"
+          cat baseline.log
+          test "$result" -eq 1
+          grep -F '31 failed, 3 passed' baseline.log
+      - name: Validate all original and new email cases on Python3.10
+        env:
+          PYTHONPATH: .
+        run: |
+          set -euo pipefail
+          python -m pytest -q -rA -o addopts= -p no:cacheprovider --tb=short --junitxml=email-results.xml tests/test_agentuniverse/unit/agent/action/tool/test_email_attachment_boundaries.py tests/test_agentuniverse/unit/agent/action/tool/test_email_document_tool.py
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          suites=ET.parse('email-results.xml').getroot().findall('.//testsuite')
+          counts={key:sum(int(suite.get(key,0)) for suite in suites) for key in ['tests','failures','errors','skipped']}
+          print(counts)
+          assert counts=={'tests':51,'failures':0,'errors':0,'skipped':0},counts
+          PY
+          git diff 93ac9e214ba626c7c8fea68f66bca239963ed3c9 HEAD^ --check
+          git diff --exit-code HEAD -- agentuniverse tests
