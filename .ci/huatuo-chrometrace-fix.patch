@@ -131,10 +131,10 @@ index 2b8ab7f..90aaeb4 100644
  	})
 diff --git a/internal/profiling/formatter/chrometrace/fractional_test.go b/internal/profiling/formatter/chrometrace/fractional_test.go
 new file mode 100644
-index 0000000..6b2e1b6
+index 0000000..852c230
 --- /dev/null
 +++ b/internal/profiling/formatter/chrometrace/fractional_test.go
-@@ -0,0 +1,239 @@
+@@ -0,0 +1,243 @@
 +// Copyright 2026 The HuaTuo Authors
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -154,7 +154,6 @@ index 0000000..6b2e1b6
 +import (
 +	"bytes"
 +	"encoding/json"
-+	"math/big"
 +	"os"
 +	"path/filepath"
 +	"testing"
@@ -233,11 +232,16 @@ index 0000000..6b2e1b6
 +		value int64
 +		want  string
 +	}{
-+		{"nanoseconds", 1, "0.001"}, {"nanoseconds", 500, "0.5"},
-+		{"nanoseconds", 999, "0.999"}, {"nanoseconds", 1000, "1"},
-+		{"nanoseconds", 1001, "1.001"}, {"nanoseconds", 1500, "1.5"},
-+		{"nanoseconds", 999999, "999.999"}, {"microseconds", 1, "1"},
-+		{"milliseconds", 1, "1000"}, {"seconds", 1, "1000000"},
++		{"nanoseconds", 1, "0.001"},
++		{"nanoseconds", 500, "0.5"},
++		{"nanoseconds", 999, "0.999"},
++		{"nanoseconds", 1000, "1"},
++		{"nanoseconds", 1001, "1.001"},
++		{"nanoseconds", 1500, "1.5"},
++		{"nanoseconds", 999999, "999.999"},
++		{"microseconds", 1, "1"},
++		{"milliseconds", 1, "1000"},
++		{"seconds", 1, "1000000"},
 +	} {
 +		t.Run(test.unit+"/"+test.want, func(t *testing.T) {
 +			f, path := fractionalFormatter(t)
@@ -293,20 +297,20 @@ index 0000000..6b2e1b6
 +	if err := f.Add(t.Context(), fractionalWindow("nanoseconds", values...)); err != nil {
 +		t.Fatal(err)
 +	}
++	if err := f.Add(t.Context(), fractionalWindow("nanoseconds", 1)); err != nil {
++		t.Fatal(err)
++	}
 +	events := fractionalEvents(t, f, path)
-+	if len(events) != 2000 {
++	if len(events) != 2002 {
 +		t.Fatalf("event count=%d", len(events))
 +	}
-+	total := new(big.Rat)
-+	for i := 0; i < len(events); i += 2 {
-+		value, ok := new(big.Rat).SetString(events[i].Duration.String())
-+		if !ok {
-+			t.Fatalf("invalid duration %q", events[i].Duration)
++	for _, item := range events {
++		if item.Duration.String() != "0.001" {
++			t.Fatalf("duration=%s; want 0.001", item.Duration)
 +		}
-+		total.Add(total, value)
 +	}
-+	if total.Cmp(big.NewRat(1, 1)) != 0 || events[1998].Time.String() != "0.999" {
-+		t.Fatalf("total=%s last timestamp=%s; want 1 and 0.999", total, events[1998].Time)
++	if events[1998].Time.String() != "0.999" || events[2000].Time.String() != "1" {
++		t.Fatalf("last timestamp=%s next window=%s; want 0.999 and 1", events[1998].Time, events[2000].Time)
 +	}
 +}
 +

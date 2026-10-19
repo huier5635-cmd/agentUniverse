@@ -36,7 +36,6 @@ jobs:
           set -e
           test "$result" -eq 1
           python3 ../.ci/huatuo-chrometrace-counts.py ../baseline.jsonl 9 8
-          GOMAXPROCS=2 go test -p=2 -mod=vendor -run '^$' -bench BenchmarkFormatterFractional -benchmem -benchtime=200ms -count=3 ./internal/profiling/formatter/chrometrace
       - name: Verify exact proposed tree and native regression results
         run: |
           set -euo pipefail
@@ -44,13 +43,12 @@ jobs:
           rm huatuo/internal/profiling/formatter/chrometrace/fractional_test.go
           git -C huatuo apply ../.ci/huatuo-chrometrace-fix.patch
           git -C huatuo add internal/profiling/formatter/chrometrace/chrometrace.go internal/profiling/formatter/chrometrace/fractional_test.go docs/key-feature/continuous-profiling_en.md docs/key-feature/continuous-profiling_zh.md
-          test "$(git -C huatuo write-tree)" = fd0a598564de12f0bd9bfda019f9f6480a5855ea
+          test "$(git -C huatuo write-tree)" = 5db815ff3f798e469e3e41f75ad593b167e887c3
           cd huatuo
           GOMAXPROCS=2 go test -p=2 -mod=vendor -count=1 -json ./internal/profiling/formatter/chrometrace > ../fixed.jsonl 2>&1
           python3 ../.ci/huatuo-chrometrace-counts.py ../fixed.jsonl 0 17
           GOMAXPROCS=2 go test -p=2 -mod=vendor -race -count=1 ./internal/profiling/formatter/chrometrace
           GOMAXPROCS=2 go vet -p=2 -mod=vendor ./internal/profiling/formatter/chrometrace
-          GOMAXPROCS=2 go test -p=2 -mod=vendor -run '^$' -bench BenchmarkFormatterFractional -benchmem -benchtime=200ms -count=3 ./internal/profiling/formatter/chrometrace
           git diff --check
   repository-check:
     runs-on: ubuntu-24.04
@@ -68,7 +66,7 @@ jobs:
           git -C huatuo checkout --detach FETCH_HEAD
           git -C huatuo apply ../.ci/huatuo-chrometrace-fix.patch
           git -C huatuo add internal/profiling/formatter/chrometrace/chrometrace.go internal/profiling/formatter/chrometrace/fractional_test.go docs/key-feature/continuous-profiling_en.md docs/key-feature/continuous-profiling_zh.md
-          test "$(git -C huatuo write-tree)" = fd0a598564de12f0bd9bfda019f9f6480a5855ea
+          test "$(git -C huatuo write-tree)" = 5db815ff3f798e469e3e41f75ad593b167e887c3
       - name: Build the official development toolchain
         working-directory: huatuo
         run: docker build --target devel --progress plain -t huatuo-chrometrace-check -f Dockerfile.devel .
