@@ -1,13 +1,13 @@
-name: HUATUO numeric roundtrip baseline
+name: HUATUO numeric roundtrip validation
 on:
   push:
     branches: [ci/huatuo-numeric-filter]
   workflow_dispatch:
 permissions: {}
 jobs:
-  reproduce:
+  regressions:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
@@ -16,7 +16,7 @@ jobs:
         with:
           go-version: '1.24.3'
           cache: false
-      - name: Prepare exact upstream source and proposed regression
+      - name: Prepare exact upstream source
         run: |
           set -euo pipefail
           git init huatuo
@@ -24,17 +24,60 @@ jobs:
           git -C huatuo fetch --depth=1 origin 2b37ecae7cf2e2566ee0c882d6ae5b0f8edac4e8
           git -C huatuo checkout --detach FETCH_HEAD
           test "$(git -C huatuo rev-parse HEAD)" = 2b37ecae7cf2e2566ee0c882d6ae5b0f8edac4e8
-          git -C huatuo apply ../.ci/huatuo-numeric-regression.patch
           go version
           uname -a
-      - name: Reproduce read-back numeric filter rejection
+      - name: Reproduce against unchanged upstream
         run: |
           set -euo pipefail
+          git -C huatuo apply ../.ci/huatuo-numeric-regression.patch
           cd huatuo
           set +e
-          go test -mod=vendor -count=1 ./internal/storage/sqlite -run '^TestSQLiteReadBackNumericPredicates$' -v > ../baseline.log 2>&1
+          GOMAXPROCS=2 go test -p=2 -mod=vendor -count=1 ./internal/storage/driver ./internal/storage/sqlite ./internal/storage/elasticsearch -run 'TestNormalizeFilterJSONNumbers|TestSQLiteReadBackNumericPredicates|TestBuildClauseComparisons|TestBuildClauseRangePrecision' -v > ../baseline.log 2>&1
           result=$?
           set -e
           cat ../baseline.log
           test "$result" -ne 0
           grep -F 'unsupported comparison value of type json.Number' ../baseline.log
+      - name: Apply the exact fix and run all affected package tests
+        run: |
+          set -euo pipefail
+          git -C huatuo reset --hard HEAD
+          python3 - <<'PY'
+          from pathlib import Path
+          extra = Path('huatuo/internal/storage/sqlite/number_roundtrip_test.go')
+          if extra.exists():
+              extra.unlink()
+          PY
+          git -C huatuo apply ../.ci/huatuo-numeric-fix.patch
+          cd huatuo
+          GOMAXPROCS=2 go test -p=2 -mod=vendor -count=1 ./internal/storage/driver ./internal/storage/sqlite ./internal/storage/elasticsearch
+          GOMAXPROCS=2 go test -p=2 -mod=vendor -race -count=1 ./internal/storage/driver ./internal/storage/sqlite ./internal/storage/elasticsearch
+          GOMAXPROCS=2 go vet -p=2 -mod=vendor ./internal/storage/driver ./internal/storage/sqlite ./internal/storage/elasticsearch
+          git diff --check
+  repository-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare exact source and proposed fix
+        run: |
+          set -euo pipefail
+          git init huatuo
+          git -C huatuo remote add origin https://github.com/ccfos/huatuo.git
+          git -C huatuo fetch --depth=1 origin 2b37ecae7cf2e2566ee0c882d6ae5b0f8edac4e8
+          git -C huatuo checkout --detach FETCH_HEAD
+          git -C huatuo apply ../.ci/huatuo-numeric-fix.patch
+          git -C huatuo add docs/best-practice/storage_en.md docs/best-practice/storage_zh.md internal/storage/driver/filter.go internal/storage/driver/filter_test.go internal/storage/sqlite/number_roundtrip_test.go internal/storage/elasticsearch/dsl_test.go
+      - name: Build the repository development toolchain
+        working-directory: huatuo
+        run: docker build --target devel --progress plain -t huatuo-numeric-check -f Dockerfile.devel .
+      - name: Run the repository build and required check
+        working-directory: huatuo
+        run: |
+          docker run --rm -v "$PWD:/workspace" -w /workspace huatuo-numeric-check sh -ec '
+            git config --global --add safe.directory /workspace
+            make build
+            make check
+          '
