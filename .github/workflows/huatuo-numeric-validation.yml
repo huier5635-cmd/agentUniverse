@@ -1,0 +1,40 @@
+name: HUATUO numeric roundtrip baseline
+on:
+  push:
+    branches: [ci/huatuo-numeric-filter]
+  workflow_dispatch:
+permissions: {}
+jobs:
+  reproduce:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.3'
+          cache: false
+      - name: Prepare exact upstream source and proposed regression
+        run: |
+          set -euo pipefail
+          git init huatuo
+          git -C huatuo remote add origin https://github.com/ccfos/huatuo.git
+          git -C huatuo fetch --depth=1 origin 2b37ecae7cf2e2566ee0c882d6ae5b0f8edac4e8
+          git -C huatuo checkout --detach FETCH_HEAD
+          test "$(git -C huatuo rev-parse HEAD)" = 2b37ecae7cf2e2566ee0c882d6ae5b0f8edac4e8
+          git -C huatuo apply ../.ci/huatuo-numeric-regression.patch
+          go version
+          uname -a
+      - name: Reproduce read-back numeric filter rejection
+        run: |
+          set -euo pipefail
+          cd huatuo
+          set +e
+          go test -mod=vendor -count=1 ./internal/storage/sqlite -run '^TestSQLiteReadBackNumericPredicates$' -v > ../baseline.log 2>&1
+          result=$?
+          set -e
+          cat ../baseline.log
+          test "$result" -ne 0
+          grep -F 'unsupported comparison value of type json.Number' ../baseline.log
