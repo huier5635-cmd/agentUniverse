@@ -1,0 +1,86 @@
+name: HUATUO fractional Chrome Trace validation
+on:
+  push:
+    branches: [ci/huatuo-chrometrace-fractional]
+permissions: {}
+jobs:
+  regressions:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.3'
+          cache: false
+      - name: Prepare exact unchanged upstream source
+        run: |
+          set -euo pipefail
+          git init huatuo
+          git -C huatuo remote add origin https://github.com/ccfos/huatuo.git
+          git -C huatuo fetch --depth=1 origin 2b37ecae7cf2e2566ee0c882d6ae5b0f8edac4e8
+          git -C huatuo checkout --detach FETCH_HEAD
+          test "$(git -C huatuo rev-parse HEAD)" = 2b37ecae7cf2e2566ee0c882d6ae5b0f8edac4e8
+          go version
+          uname -a
+      - name: Reproduce original fractional-duration loss
+        run: |
+          set -euo pipefail
+          git -C huatuo apply ../.ci/huatuo-chrometrace-regression.patch
+          cd huatuo
+          set +e
+          GOMAXPROCS=2 go test -p=2 -mod=vendor -count=1 -json ./internal/profiling/formatter/chrometrace -run '^TestFormatterFractional' > ../baseline.jsonl 2>&1
+          result=$?
+          set -e
+          test "$result" -eq 1
+          python3 ../.ci/huatuo-chrometrace-counts.py ../baseline.jsonl 9 8
+          GOMAXPROCS=2 go test -p=2 -mod=vendor -run '^$' -bench BenchmarkFormatterFractional -benchmem -benchtime=200ms -count=3 ./internal/profiling/formatter/chrometrace
+      - name: Verify exact proposed tree and native regression results
+        run: |
+          set -euo pipefail
+          git -C huatuo reset --hard HEAD
+          rm huatuo/internal/profiling/formatter/chrometrace/fractional_test.go
+          git -C huatuo apply ../.ci/huatuo-chrometrace-fix.patch
+          git -C huatuo add internal/profiling/formatter/chrometrace/chrometrace.go internal/profiling/formatter/chrometrace/fractional_test.go docs/key-feature/continuous-profiling_en.md docs/key-feature/continuous-profiling_zh.md
+          test "$(git -C huatuo write-tree)" = fd0a598564de12f0bd9bfda019f9f6480a5855ea
+          cd huatuo
+          GOMAXPROCS=2 go test -p=2 -mod=vendor -count=1 -json ./internal/profiling/formatter/chrometrace > ../fixed.jsonl 2>&1
+          python3 ../.ci/huatuo-chrometrace-counts.py ../fixed.jsonl 0 17
+          GOMAXPROCS=2 go test -p=2 -mod=vendor -race -count=1 ./internal/profiling/formatter/chrometrace
+          GOMAXPROCS=2 go vet -p=2 -mod=vendor ./internal/profiling/formatter/chrometrace
+          GOMAXPROCS=2 go test -p=2 -mod=vendor -run '^$' -bench BenchmarkFormatterFractional -benchmem -benchtime=200ms -count=3 ./internal/profiling/formatter/chrometrace
+          git diff --check
+  repository-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare the proposed source
+        run: |
+          set -euo pipefail
+          git init huatuo
+          git -C huatuo remote add origin https://github.com/ccfos/huatuo.git
+          git -C huatuo fetch --depth=1 origin 2b37ecae7cf2e2566ee0c882d6ae5b0f8edac4e8
+          git -C huatuo checkout --detach FETCH_HEAD
+          git -C huatuo apply ../.ci/huatuo-chrometrace-fix.patch
+          git -C huatuo add internal/profiling/formatter/chrometrace/chrometrace.go internal/profiling/formatter/chrometrace/fractional_test.go docs/key-feature/continuous-profiling_en.md docs/key-feature/continuous-profiling_zh.md
+          test "$(git -C huatuo write-tree)" = fd0a598564de12f0bd9bfda019f9f6480a5855ea
+      - name: Build the official development toolchain
+        working-directory: huatuo
+        run: docker build --target devel --progress plain -t huatuo-chrometrace-check -f Dockerfile.devel .
+      - name: Run required repository checks and complete formatter tests
+        working-directory: huatuo
+        run: |
+          docker run --rm -v "$PWD:/workspace" -w /workspace huatuo-chrometrace-check sh -ec '
+            git config --global --add safe.directory /workspace
+            go version
+            make build
+            make check
+            GOMAXPROCS=2 go test -p=2 -mod=vendor -count=1 -v ./internal/profiling/formatter/... ./internal/profiling/window
+            GOMAXPROCS=2 go test -p=2 -mod=vendor -race -count=1 ./internal/profiling/formatter/... ./internal/profiling/window
+            GOMAXPROCS=2 go vet -p=2 -mod=vendor ./internal/profiling/formatter/... ./internal/profiling/window
+          '

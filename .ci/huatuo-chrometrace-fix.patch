@@ -1,0 +1,376 @@
+diff --git a/docs/key-feature/continuous-profiling_en.md b/docs/key-feature/continuous-profiling_en.md
+index 15fed12..f1836c8 100644
+--- a/docs/key-feature/continuous-profiling_en.md
++++ b/docs/key-feature/continuous-profiling_en.md
+@@ -751,6 +751,8 @@ Built-in single-value labels are `pid`, `cpu`, `comm`, `lock_address`, `irq`, `s
+ 
+ Local formatters consume the common window. JSON and the receiving handler use the shared pprof builder, preserving source positions, signed values, and sample labels. The JSON envelope and ES document structure remain unchanged. A separate legacy full-pprof input retains multiple metrics, mappings, inline locations, and original sampling metadata.
+ 
++Chrome Trace output places aggregate stacks on an estimated timeline, rather than reconstructing observation order. Timestamps and durations are JSON microseconds with up to three fractional digits, so a 500-nanosecond weight remains `0.5` microseconds. Timeline arithmetic retains integer nanoseconds across windows and unit conversions. Negative weights, non-time units, and a timeline beyond `2^53-1` microseconds remain errors. JSON preserves the fractional values; browser viewers still use IEEE-754 numbers.
++
+ ### Configuration, queues, and timestamps
+ 
+ The runner validates fixed configuration and creates the formatter before collection. `provider.New` copies configuration and creates a collector per task. Task ID and tool name come from `RunConfig.ID` and `ProfilerMeta.ToolName`; an ID is generated only when absent. `formatter.Config` contains Format, Destination, TaskID, and ToolName. Formatters own file creation and cleanup.
+diff --git a/docs/key-feature/continuous-profiling_zh.md b/docs/key-feature/continuous-profiling_zh.md
+index ef1390d..7ae2c20 100644
+--- a/docs/key-feature/continuous-profiling_zh.md
++++ b/docs/key-feature/continuous-profiling_zh.md
+@@ -734,6 +734,8 @@ flowchart LR
+ 
+ ## 公共采集窗口
+ 
++Chrome Trace 导出将聚合调用栈排列在估算时间线上，不重建实际观测顺序。JSON 的时间戳和时长以微秒为单位，最多保留三位小数，因此 500 纳秒的权重保留为 `0.5` 微秒。跨窗口及单位换算采用整数纳秒运算；负权重、非时间单位和超过 `2^53-1` 微秒的时间线仍返回错误。JSON 保留小数值，浏览器查看器仍受 IEEE-754 数值精度限制。
++
+ profiler 与 irqtracing 共用 `internal/profiling/profile.Run`、Pipeline 和 `types.AggregationWindow`。provider 负责采集、解码、符号化、单位换算及标签规范化，提交 `SampleBatch`；Pipeline 按用户栈、内核栈和完整标签组累计。Java agent 生命周期位于 `cmd/profiler/runtime/java`，工具执行位于 `cmd/profiler/exec`。
+ 
+ 窗口包含结构化帧（Name/File/Line）、root → leaf 栈表、标签组、带符号 int64 权重及时间。帧 ID 从 0 开始，栈和标签组 ID 从 1 开始，0 表示空。provider 提交最终单位，CPU/锁等待使用纳秒，内存使用字节，IRQ source/victim 使用事件次数；Pipeline 保留负数及相消后的零值。新路径没有 Period，不在输出时再次缩放。physical_usage 表示采集期间有符号净变化，不代表当前占用。
+diff --git a/internal/profiling/formatter/chrometrace/chrometrace.go b/internal/profiling/formatter/chrometrace/chrometrace.go
+index 2b8ab7f..90aaeb4 100644
+--- a/internal/profiling/formatter/chrometrace/chrometrace.go
++++ b/internal/profiling/formatter/chrometrace/chrometrace.go
+@@ -20,6 +20,7 @@ import (
+ 	"encoding/json"
+ 	"fmt"
+ 	"io"
++	"strconv"
+ 
+ 	profilewindow "github.com/ccfos/huatuo/internal/profiling/window"
+ 
+@@ -31,7 +32,7 @@ import (
+ // TODO: preserve observation timestamps before aggregation to recover chronology.
+ type formatter struct {
+ 	events      []event
+-	endUS       int64
++	endNS       int64
+ 	destination *output.LocalDestination
+ }
+ 
+@@ -40,13 +41,31 @@ type event struct {
+ 	Phase       string            `json:"ph"`
+ 	PID         int64             `json:"pid"`
+ 	TID         int64             `json:"tid"`
+-	TimestampUS int64             `json:"ts"`
+-	DurationUS  *int64            `json:"dur,omitempty"`
++	TimestampUS traceTime         `json:"ts"`
++	DurationUS  *traceTime        `json:"dur,omitempty"`
+ 	Args        map[string]string `json:"args,omitempty"`
+ }
+ 
+ const maxExactInteger int64 = 1<<53 - 1
+ 
++// traceTime keeps nanoseconds for arithmetic and emits fractional microseconds.
++type traceTime int64
++
++func (value traceTime) MarshalJSON() ([]byte, error) {
++	if value < 0 {
++		return nil, fmt.Errorf("chrometrace: negative event time %d", value)
++	}
++	nanos := int64(value)
++	data := strconv.AppendInt(make([]byte, 0, 24), nanos/1000, 10)
++	if fraction := nanos % 1000; fraction != 0 {
++		data = append(data, '.', byte('0'+fraction/100), byte('0'+fraction/10%10), byte('0'+fraction%10))
++		for data[len(data)-1] == '0' {
++			data = data[:len(data)-1]
++		}
++	}
++	return data, nil
++}
++
+ var _ output.Formatter = (*formatter)(nil)
+ 
+ // NewFormatter initializes chrometrace output.
+@@ -76,15 +95,15 @@ func (f *formatter) Add(ctx context.Context, window *types.AggregationWindow) er
+ 
+ 	unit := parts[2]
+ 
+-	multiplier, divisor := int64(1), int64(1)
++	multiplier := int64(1)
+ 	switch unit {
+ 	case "nanoseconds":
+-		divisor = 1000
+ 	case "microseconds":
+-	case "milliseconds":
+ 		multiplier = 1000
+-	case "seconds":
++	case "milliseconds":
+ 		multiplier = 1000000
++	case "seconds":
++		multiplier = 1000000000
+ 	default:
+ 		return fmt.Errorf("chrometrace: cannot estimate duration from unit %q", unit)
+ 	}
+@@ -98,12 +117,11 @@ func (f *formatter) Add(ctx context.Context, window *types.AggregationWindow) er
+ 			return nil
+ 		}
+ 
+-		duration := value / divisor
+-		if duration > (maxExactInteger-f.endUS)/multiplier {
++		if value > (maxExactInteger*1000-f.endNS)/multiplier {
+ 			return fmt.Errorf("chrometrace: estimated timeline exceeds 2^53-1 microseconds")
+ 		}
+ 
+-		duration *= multiplier
++		duration := traceTime(value * multiplier)
+ 		if len(f.events) == 0 {
+ 			f.events = append(f.events, event{
+ 				Name:  "thread_name",
+@@ -116,12 +134,12 @@ func (f *formatter) Add(ctx context.Context, window *types.AggregationWindow) er
+ 			f.events = append(f.events, event{
+ 				Name:        name,
+ 				Phase:       "X",
+-				TimestampUS: f.endUS,
++				TimestampUS: traceTime(f.endNS),
+ 				DurationUS:  &duration,
+ 			})
+ 		}
+ 
+-		f.endUS += duration
++		f.endNS += int64(duration)
+ 
+ 		return nil
+ 	})
+diff --git a/internal/profiling/formatter/chrometrace/fractional_test.go b/internal/profiling/formatter/chrometrace/fractional_test.go
+new file mode 100644
+index 0000000..6b2e1b6
+--- /dev/null
++++ b/internal/profiling/formatter/chrometrace/fractional_test.go
+@@ -0,0 +1,239 @@
++// Copyright 2026 The HuaTuo Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++// http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package chrometrace
++
++import (
++	"bytes"
++	"encoding/json"
++	"math/big"
++	"os"
++	"path/filepath"
++	"testing"
++
++	output "github.com/ccfos/huatuo/internal/profiling/formatter"
++	"github.com/ccfos/huatuo/pkg/types"
++)
++
++func fractionalWindow(unit string, values ...int64) *types.AggregationWindow {
++	w := &types.AggregationWindow{
++		ProfileType: "process_cpu:cpu:" + unit + ":cpu:" + unit,
++		Aggregated: types.AggregatedProfile{
++			TimeNanos:     1,
++			DurationNanos: 1,
++			Frames:        []types.ProfileFrame{{Name: "root"}, {Name: "leaf"}},
++			Stacks:        [][]uint32{{0, 1}},
++		},
++	}
++	for _, value := range values {
++		w.Aggregated.Samples = append(w.Aggregated.Samples, types.AggregatedSample{UserStack: 1, Value: value})
++	}
++	return w
++}
++
++func fractionalFormatter(t *testing.T) (output.Formatter, string) {
++	t.Helper()
++	path := filepath.Join(t.TempDir(), "trace.json")
++	f, err := NewFormatter(output.Config{Destination: path})
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() {
++		if err := f.Close(); err != nil {
++			t.Error(err)
++		}
++	})
++	return f, path
++}
++
++type decodedEvent struct {
++	Name     string      `json:"name"`
++	Phase    string      `json:"ph"`
++	Time     json.Number `json:"ts"`
++	Duration json.Number `json:"dur"`
++}
++
++func fractionalEvents(t *testing.T, f output.Formatter, path string) []decodedEvent {
++	t.Helper()
++	if err := f.Complete(t.Context()); err != nil {
++		t.Fatal(err)
++	}
++	data, err := os.ReadFile(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	var trace struct {
++		Events []decodedEvent `json:"traceEvents"`
++	}
++	decoder := json.NewDecoder(bytes.NewReader(data))
++	decoder.UseNumber()
++	if err := decoder.Decode(&trace); err != nil {
++		t.Fatal(err)
++	}
++	var events []decodedEvent
++	for _, item := range trace.Events {
++		if item.Phase == "X" {
++			events = append(events, item)
++		}
++	}
++	return events
++}
++
++func TestFormatterFractionalDuration(t *testing.T) {
++	for _, test := range []struct {
++		unit  string
++		value int64
++		want  string
++	}{
++		{"nanoseconds", 1, "0.001"}, {"nanoseconds", 500, "0.5"},
++		{"nanoseconds", 999, "0.999"}, {"nanoseconds", 1000, "1"},
++		{"nanoseconds", 1001, "1.001"}, {"nanoseconds", 1500, "1.5"},
++		{"nanoseconds", 999999, "999.999"}, {"microseconds", 1, "1"},
++		{"milliseconds", 1, "1000"}, {"seconds", 1, "1000000"},
++	} {
++		t.Run(test.unit+"/"+test.want, func(t *testing.T) {
++			f, path := fractionalFormatter(t)
++			if err := f.Add(t.Context(), fractionalWindow(test.unit, test.value)); err != nil {
++				t.Fatal(err)
++			}
++			events := fractionalEvents(t, f, path)
++			if len(events) != 2 {
++				t.Fatalf("events = %v", events)
++			}
++			for i, item := range events {
++				if item.Duration.String() != test.want || item.Time.String() != "0" {
++					t.Fatalf("frame %d: timestamp=%s duration=%s; want 0/%s", i, item.Time, item.Duration, test.want)
++				}
++			}
++		})
++	}
++}
++
++func TestFormatterFractionalAcrossWindows(t *testing.T) {
++	f, path := fractionalFormatter(t)
++	for _, w := range []*types.AggregationWindow{
++		fractionalWindow("nanoseconds", 1, 499),
++		fractionalWindow("microseconds", 1),
++		fractionalWindow("nanoseconds", 1),
++		fractionalWindow("milliseconds", 2),
++	} {
++		if err := f.Add(t.Context(), w); err != nil {
++			t.Fatal(err)
++		}
++	}
++	events := fractionalEvents(t, f, path)
++	wantTimes := []string{"0", "0.001", "0.5", "1.5", "1.501"}
++	wantDurations := []string{"0.001", "0.499", "1", "0.001", "2000"}
++	if len(events) != 2*len(wantTimes) {
++		t.Fatalf("events = %v", events)
++	}
++	for i := range wantTimes {
++		for _, item := range events[2*i : 2*i+2] {
++			if item.Time.String() != wantTimes[i] || item.Duration.String() != wantDurations[i] {
++				t.Fatalf("sample %d timestamp=%s duration=%s; want %s/%s", i, item.Time, item.Duration, wantTimes[i], wantDurations[i])
++			}
++		}
++	}
++}
++
++func TestFormatterFractionalNoAccumulationLoss(t *testing.T) {
++	f, path := fractionalFormatter(t)
++	values := make([]int64, 1000)
++	for i := range values {
++		values[i] = 1
++	}
++	if err := f.Add(t.Context(), fractionalWindow("nanoseconds", values...)); err != nil {
++		t.Fatal(err)
++	}
++	events := fractionalEvents(t, f, path)
++	if len(events) != 2000 {
++		t.Fatalf("event count=%d", len(events))
++	}
++	total := new(big.Rat)
++	for i := 0; i < len(events); i += 2 {
++		value, ok := new(big.Rat).SetString(events[i].Duration.String())
++		if !ok {
++			t.Fatalf("invalid duration %q", events[i].Duration)
++		}
++		total.Add(total, value)
++	}
++	if total.Cmp(big.NewRat(1, 1)) != 0 || events[1998].Time.String() != "0.999" {
++		t.Fatalf("total=%s last timestamp=%s; want 1 and 0.999", total, events[1998].Time)
++	}
++}
++
++func TestFormatterFractionalTimelineLimit(t *testing.T) {
++	f, path := fractionalFormatter(t)
++	if err := f.Add(t.Context(), fractionalWindow("microseconds", 1<<53-2)); err != nil {
++		t.Fatal(err)
++	}
++	if err := f.Add(t.Context(), fractionalWindow("nanoseconds", 999, 1)); err != nil {
++		t.Fatal(err)
++	}
++	if err := f.Add(t.Context(), fractionalWindow("nanoseconds", 1)); err == nil {
++		t.Fatal("accepted time beyond the existing 2^53-1 microsecond limit")
++	}
++	events := fractionalEvents(t, f, path)
++	if len(events) != 6 || events[4].Time.String() != "9007199254740990.999" || events[4].Duration.String() != "0.001" {
++		t.Fatalf("boundary events=%v", events)
++	}
++}
++
++func TestFormatterFractionalRejectsInvalidWeights(t *testing.T) {
++	for _, test := range []struct {
++		unit  string
++		value int64
++	}{
++		{"bytes", 1}, {"count", 1}, {"nanoseconds", -1}, {"seconds", 1<<63 - 1},
++	} {
++		t.Run(test.unit, func(t *testing.T) {
++			f, path := fractionalFormatter(t)
++			if err := f.Add(t.Context(), fractionalWindow(test.unit, test.value)); err == nil {
++				t.Fatal("accepted invalid duration")
++			}
++			if err := f.Complete(t.Context()); err != nil {
++				t.Fatal(err)
++			}
++			if _, err := os.Stat(path); !os.IsNotExist(err) {
++				t.Fatalf("empty output stat=%v", err)
++			}
++		})
++	}
++}
++
++func BenchmarkFormatterFractionalAdd(b *testing.B) {
++	f := &formatter{}
++	w := fractionalWindow("nanoseconds", 1500)
++	b.ReportAllocs()
++	for b.Loop() {
++		events := f.events[:0]
++		*f = formatter{events: events}
++		if err := f.Add(b.Context(), w); err != nil {
++			b.Fatal(err)
++		}
++	}
++}
++
++func BenchmarkFormatterFractionalEncode(b *testing.B) {
++	f := &formatter{}
++	if err := f.Add(b.Context(), fractionalWindow("nanoseconds", 1500)); err != nil {
++		b.Fatal(err)
++	}
++	b.ReportAllocs()
++	for b.Loop() {
++		if _, err := json.Marshal(f.events); err != nil {
++			b.Fatal(err)
++		}
++	}
++}
