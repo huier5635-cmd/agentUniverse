@@ -1,0 +1,65 @@
+name: Document create-only validation
+on:
+  push:
+    branches: [ci/document-create-no-clobber]
+permissions: {}
+jobs:
+  linux-documents:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 3
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Verify exact proposed source
+        run: |
+          test "$(git rev-parse HEAD^)" = a0309f3cddf98555822cff32817eb0c844d5c661
+          test "$(git rev-parse 'HEAD^{tree}')" != ''
+          test "$(git rev-parse 'HEAD^'^{tree})" = aa13d4947081ba1dd78ab72aa417dcee165fdec1
+          test "$(git diff --name-only HEAD^ HEAD)" = .github/workflows/document-create-validation.yml
+      - name: Install the isolated native test stack
+        run: |
+          python -m pip install pytest==8.3.5 pydantic==2.6.4 langchain==0.1.20 langchain-community==0.0.38 loguru==0.7.2 tomli==2.2.1 opentelemetry-sdk==1.25.0 python-docx==1.2.0 python-pptx==1.0.2
+          python -c "import sys,os,docx,pptx,pydantic; print(sys.version,os.name,docx.__version__,pptx.__version__,pydantic.__version__)"
+      - name: Reproduce the unchanged source overwriting a successful creator
+        env:
+          PYTHONPATH: .
+        run: |
+          set -euo pipefail
+          paths=(
+            agentuniverse/agent/action/tool/common_tool/file_path_utils.py
+            agentuniverse/agent/action/tool/common_tool/word_document_tool.py
+            agentuniverse/agent/action/tool/common_tool/powerpoint_tool.py
+          )
+          for path in "${paths[@]}"; do
+            git show "93ac9e214ba626c7c8fea68f66bca239963ed3c9:$path" > "$path"
+          done
+          set +e
+          python -m pytest -q -o addopts= -p no:cacheprovider --tb=short tests/test_agentuniverse/unit/agent/action/tool/test_document_create_race.py > baseline.log 2>&1
+          result=$?
+          set -e
+          git restore --source=HEAD -- "${paths[@]}"
+          cat baseline.log
+          test "$result" -eq 1
+          grep -F '4 failed, 8 passed' baseline.log
+          grep -F "AssertionError: assert 'winner' in" baseline.log
+      - name: Run complete affected document tool tests and publication checks
+        env:
+          PYTHONPATH: .
+        run: |
+          set -euo pipefail
+          python -m pytest -q -rA -o addopts= -p no:cacheprovider --tb=short --junitxml=document-results.xml tests/test_agentuniverse/unit/agent/action/tool/test_document_create_race.py tests/test_agentuniverse/unit/agent/action/tool/test_word_document_tool.py tests/test_agentuniverse/unit/agent/action/tool/test_powerpoint_tool.py tests/test_agentuniverse/unit/agent/action/tool/test_atomic_file_publish.py
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          suites = ET.parse('document-results.xml').getroot().findall('.//testsuite')
+          counts = {key: sum(int(suite.get(key, 0)) for suite in suites) for key in ['tests', 'failures', 'errors', 'skipped']}
+          print(counts)
+          assert counts == {'tests': 77, 'failures': 0, 'errors': 0, 'skipped': 0}, counts
+          PY
+          git diff 93ac9e214ba626c7c8fea68f66bca239963ed3c9 HEAD^ --check
+          git diff --exit-code HEAD -- agentuniverse tests
+
