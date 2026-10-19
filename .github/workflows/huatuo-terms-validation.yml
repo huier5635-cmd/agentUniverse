@@ -1,0 +1,112 @@
+name: HUATUO terms integer precision validation
+on:
+  push:
+    branches: [ci/huatuo-terms-precision]
+  workflow_dispatch:
+permissions: {}
+jobs:
+  regressions:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.3'
+          cache: false
+      - name: Prepare exact upstream source
+        run: |
+          set -euo pipefail
+          git init huatuo
+          git -C huatuo remote add origin https://github.com/ccfos/huatuo.git
+          git -C huatuo fetch --depth=1 origin 2b37ecae7cf2e2566ee0c882d6ae5b0f8edac4e8
+          git -C huatuo checkout --detach FETCH_HEAD
+          test "$(git -C huatuo rev-parse HEAD)" = 2b37ecae7cf2e2566ee0c882d6ae5b0f8edac4e8
+          go version
+          uname -a
+      - name: Start an isolated OpenSearch instance
+        run: |
+          set -euo pipefail
+          docker run -d --name terms-opensearch --memory=2g -p 127.0.0.1:9200:9200 \
+            -e discovery.type=single-node -e node.store.allow_mmap=false \
+            -e DISABLE_SECURITY_PLUGIN=true -e DISABLE_INSTALL_DEMO_CONFIG=true \
+            -e 'OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m' \
+            opensearchproject/opensearch:2.19.0
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:9200 > opensearch-info.json; then
+              cat opensearch-info.json
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs terms-opensearch
+          exit 1
+      - name: Reproduce unchanged upstream against native HTTP and live OpenSearch
+        env:
+          HUATUO_TERMS_TEST_OPENSEARCH_URL: http://127.0.0.1:9200
+        run: |
+          set -euo pipefail
+          git -C huatuo apply ../.ci/huatuo-terms-regression.patch
+          cd huatuo
+          set +e
+          GOMAXPROCS=2 go test -p=2 -mod=vendor -count=1 ./internal/storage/elasticsearch -run 'TestStorageTermsIntegerPrecision|TestStorageTermsMalformedTypedValues|TestStorageTermsLiveOpenSearch' -v > ../baseline.log 2>&1
+          result=$?
+          set -e
+          cat ../baseline.log
+          test "$result" -ne 0
+          grep -F 'OpenSearch Values() =' ../baseline.log
+      - name: Apply the exact fix and run all affected package tests
+        env:
+          HUATUO_TERMS_TEST_OPENSEARCH_URL: http://127.0.0.1:9200
+        run: |
+          set -euo pipefail
+          git -C huatuo reset --hard HEAD
+          python3 - <<'PY'
+          from pathlib import Path
+          extra = Path('huatuo/internal/storage/elasticsearch/terms_precision_test.go')
+          if extra.exists():
+              extra.unlink()
+          PY
+          git -C huatuo apply ../.ci/huatuo-terms-fix.patch
+          git -C huatuo add docs/best-practice/storage_en.md docs/best-practice/storage_zh.md internal/storage/elasticsearch/elasticsearch.go internal/storage/elasticsearch/terms.go internal/storage/elasticsearch/terms_precision_test.go
+          test "$(git -C huatuo write-tree)" = 1ad0da6625ce44bef5db39d23665b86767130e30
+          cd huatuo
+          GOMAXPROCS=2 go test -p=2 -mod=vendor -count=1 ./internal/storage/elasticsearch
+          GOMAXPROCS=2 go test -p=2 -mod=vendor -race -count=1 ./internal/storage/elasticsearch
+          GOMAXPROCS=2 go vet -p=2 -mod=vendor ./internal/storage/elasticsearch
+          git diff --check
+      - name: Stop the test-owned OpenSearch container
+        if: always()
+        run: |
+          docker logs --tail 30 terms-opensearch || true
+          docker rm -f terms-opensearch || true
+  repository-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare exact source and proposed fix
+        run: |
+          set -euo pipefail
+          git init huatuo
+          git -C huatuo remote add origin https://github.com/ccfos/huatuo.git
+          git -C huatuo fetch --depth=1 origin 2b37ecae7cf2e2566ee0c882d6ae5b0f8edac4e8
+          git -C huatuo checkout --detach FETCH_HEAD
+          git -C huatuo apply ../.ci/huatuo-terms-fix.patch
+          git -C huatuo add docs/best-practice/storage_en.md docs/best-practice/storage_zh.md internal/storage/elasticsearch/elasticsearch.go internal/storage/elasticsearch/terms.go internal/storage/elasticsearch/terms_precision_test.go
+          test "$(git -C huatuo write-tree)" = 1ad0da6625ce44bef5db39d23665b86767130e30
+      - name: Build the official repository development toolchain
+        working-directory: huatuo
+        run: docker build --target devel --progress plain -t huatuo-terms-check -f Dockerfile.devel .
+      - name: Run repository build and required check
+        working-directory: huatuo
+        run: |
+          docker run --rm -v "$PWD:/workspace" -w /workspace huatuo-terms-check sh -ec '
+            git config --global --add safe.directory /workspace
+            make build
+            make check
+          '

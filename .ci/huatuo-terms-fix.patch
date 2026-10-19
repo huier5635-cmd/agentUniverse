@@ -1,0 +1,343 @@
+diff --git a/docs/best-practice/storage_en.md b/docs/best-practice/storage_en.md
+index 39feebf..7bab9ce 100644
+--- a/docs/best-practice/storage_en.md
++++ b/docs/best-practice/storage_en.md
+@@ -513,6 +513,11 @@ remaining total. Callers must supply a positive total limit when they need data.
+ counts all matching records. `Values` uses its separate `size` argument, whose
+ non-negative constraint is checked by `storage.Store.Values` before dispatch;
+ backends do not repeat pagination or size validation for these operations.
++Elasticsearch/OpenSearch `Values` preserves integer term keys without converting
++them through floating point, including `unsigned_long` values returned by
++OpenSearch. String keys remain literal and floating-point terms retain their
++existing formatting. Values already rounded by the server (for example after
++numeric type promotion across indexes) cannot be recovered by the client.
+ Local file storage remains write-only.
+ 
+ SQLite streams one `SELECT ... LIMIT ... OFFSET ...` through rows. A consumer
+diff --git a/docs/best-practice/storage_zh.md b/docs/best-practice/storage_zh.md
+index 342f114..b6c9ea8 100644
+--- a/docs/best-practice/storage_zh.md
++++ b/docs/best-practice/storage_zh.md
+@@ -502,6 +502,9 @@ Bulk 请求的失败语义分为两层，重试范围不同：
+ `Filters`，忽略 `Sorts`、`Limit`、`Offset` 和 `BatchSize`，包括零值及负数分页参数。
+ `Count` 统计全部匹配记录；`Values` 使用独立的 `size` 参数，由 `storage.Store.Values`
+ 在调用后端前校验其非负约束，后端不再重复校验这两个操作的分页参数或 `size`。
++Elasticsearch/OpenSearch 的 `Values` 保留整数聚合键，不经过浮点数转换，包括
++OpenSearch 返回的 `unsigned_long` 值。字符串键保持原文，浮点聚合键沿用原有格式。
++若服务端已发生舍入（例如跨索引查询时数值类型提升），客户端无法恢复丢失的精度。
+ 本地文件存储仍不支持查询。
+ 
+ SQLite 使用一条带 `LIMIT/OFFSET` 的 SELECT 逐行读取。回调期间查询占用唯一数据库
+diff --git a/internal/storage/elasticsearch/elasticsearch.go b/internal/storage/elasticsearch/elasticsearch.go
+index 6bd5ec3..cf3eeb6 100644
+--- a/internal/storage/elasticsearch/elasticsearch.go
++++ b/internal/storage/elasticsearch/elasticsearch.go
+@@ -34,7 +34,6 @@ import (
+ 	esdeletebyquery "github.com/elastic/go-elasticsearch/v8/typedapi/core/deletebyquery"
+ 	esget "github.com/elastic/go-elasticsearch/v8/typedapi/core/get"
+ 	esindex "github.com/elastic/go-elasticsearch/v8/typedapi/core/index"
+-	essearch "github.com/elastic/go-elasticsearch/v8/typedapi/core/search"
+ 	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
+ 
+ 	"github.com/ccfos/huatuo/internal/log"
+@@ -408,11 +407,11 @@ func (s *Storage) Values(ctx context.Context, field string, q driver.Query, size
+ 		return nil, responseError("terms aggregation", s.index, res)
+ 	}
+ 
+-	var payload essearch.Response
+-	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
++	payload, err := decodeTermsSearchResponse(res.Body)
++	if err != nil {
+ 		return nil, fmt.Errorf("elasticsearch backend terms %s/%s: decode: %w", s.index, field, err)
+ 	}
+-	if err := checkSearchStatus(&payload); err != nil {
++	if err := checkSearchStatus(payload); err != nil {
+ 		return nil, fmt.Errorf("elasticsearch backend terms %s/%s: %w", s.index, field, err)
+ 	}
+ 
+@@ -467,7 +466,11 @@ func termsValues(aggregation types.Aggregate) ([]string, error) {
+ 			if !ok {
+ 				return nil, fmt.Errorf("unexpected terms bucket %d type %T", i, value)
+ 			}
+-			result[i] = driver.StringValue(bucket["key"])
++			term, err := termString(bucket["key"])
++			if err != nil {
++				return nil, fmt.Errorf("terms bucket %d key: %w", i, err)
++			}
++			result[i] = term
+ 		}
+ 		return result, nil
+ 	default:
+diff --git a/internal/storage/elasticsearch/terms.go b/internal/storage/elasticsearch/terms.go
+new file mode 100644
+index 0000000..dbfd9fa
+--- /dev/null
++++ b/internal/storage/elasticsearch/terms.go
+@@ -0,0 +1,92 @@
++// Copyright 2026 The HuaTuo Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++// http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package elasticsearch
++
++import (
++	"encoding/json"
++	"io"
++	"strings"
++
++	essearch "github.com/elastic/go-elasticsearch/v8/typedapi/core/search"
++	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
++
++	"github.com/ccfos/huatuo/internal/storage/driver"
++)
++
++func decodeTermsSearchResponse(body io.Reader) (*essearch.Response, error) {
++	// The SDK's root decoder creates its own decoder, rounding numeric keys
++	// in fallback aggregations even when the caller enables UseNumber.
++	type responseWithoutDecoder essearch.Response
++	var payload responseWithoutDecoder
++	decoder := json.NewDecoder(body)
++	decoder.UseNumber()
++	if err := decoder.Decode(&payload); err != nil {
++		return nil, err
++	}
++	response := (*essearch.Response)(&payload)
++	if _, ok := response.Aggregations["terms"]; !ok {
++		for name, aggregation := range response.Aggregations {
++			if kind, key, typed := strings.Cut(name, "#"); typed && key == "terms" {
++				decoded, err := decodeKnownTerms(kind, aggregation)
++				if err != nil {
++					return nil, err
++				}
++				response.Aggregations["terms"] = decoded
++				break
++			}
++		}
++	}
++	return response, nil
++}
++
++func decodeKnownTerms(kind string, aggregation types.Aggregate) (types.Aggregate, error) {
++	var decoded types.Aggregate
++	switch kind {
++	case "sterms":
++		decoded = &types.StringTermsAggregate{}
++	case "lterms":
++		decoded = &types.LongTermsAggregate{}
++	case "dterms":
++		decoded = &types.DoubleTermsAggregate{}
++	case "umterms":
++		decoded = &types.UnmappedTermsAggregate{}
++	default:
++		return aggregation, nil
++	}
++	// Keep SDK validation/formatting for known aggregations. Only its generic
++	// fallback needs json.Number to preserve unsigned integer identifiers.
++	data, err := json.Marshal(aggregation)
++	if err != nil {
++		return nil, err
++	}
++	if err := json.Unmarshal(data, decoded); err != nil {
++		return nil, err
++	}
++	return decoded, nil
++}
++
++func termString(value any) (string, error) {
++	number, ok := value.(json.Number)
++	if !ok || !strings.ContainsAny(number.String(), ".eE") {
++		return driver.StringValue(value), nil
++	}
++	// Retain the existing formatting of floating-point terms without routing
++	// integer identifiers through float64.
++	floating, err := number.Float64()
++	if err != nil {
++		return "", err
++	}
++	return driver.StringValue(floating), nil
++}
+diff --git a/internal/storage/elasticsearch/terms_precision_test.go b/internal/storage/elasticsearch/terms_precision_test.go
+new file mode 100644
+index 0000000..1ce4bad
+--- /dev/null
++++ b/internal/storage/elasticsearch/terms_precision_test.go
+@@ -0,0 +1,169 @@
++// Copyright 2026 The HuaTuo Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++// http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package elasticsearch
++
++import (
++	"context"
++	"fmt"
++	"net/http"
++	"os"
++	"slices"
++	"strconv"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/elastic/go-elasticsearch/v8/esapi"
++
++	"github.com/ccfos/huatuo/internal/storage/driver"
++)
++
++func TestStorageTermsIntegerPrecision(t *testing.T) {
++	tests := []struct {
++		name    string
++		agg     string
++		buckets string
++		want    []string
++	}{
++		{
++			name: "unsigned adjacent beyond exact float integers", agg: "ulterms#terms",
++			buckets: `[{"key":9007199254740992,"doc_count":1},{"key":9007199254740993,"doc_count":1}]`,
++			want:    []string{"9007199254740992", "9007199254740993"},
++		},
++		{
++			name: "unsigned maximum adjacent", agg: "ulterms#terms",
++			buckets: `[{"key":18446744073709551614,"doc_count":1},{"key":18446744073709551615,"doc_count":1}]`,
++			want:    []string{"18446744073709551614", "18446744073709551615"},
++		},
++		{
++			name: "untyped signed extremes", agg: "terms",
++			buckets: `[{"key":-9223372036854775808,"doc_count":1},{"key":9223372036854775807,"doc_count":1}]`,
++			want:    []string{"-9223372036854775808", "9223372036854775807"},
++		},
++		{
++			name: "untyped unsigned maximum", agg: "terms",
++			buckets: `[{"key":18446744073709551615,"doc_count":1}]`,
++			want:    []string{"18446744073709551615"},
++		},
++		{
++			name: "typed signed integers", agg: "lterms#terms",
++			buckets: `[{"key":9007199254740993,"doc_count":1},{"key":9223372036854775807,"doc_count":1}]`,
++			want:    []string{"9007199254740993", "9223372036854775807"},
++		},
++		{
++			name: "literal strings", agg: "sterms#terms",
++			buckets: `[{"key":"001","doc_count":1},{"key":"1.0","doc_count":1}]`,
++			want:    []string{"001", "1.0"},
++		},
++		{
++			name: "typed floating values", agg: "dterms#terms",
++			buckets: `[{"key":1.50,"doc_count":1},{"key":1e3,"doc_count":1}]`,
++			want:    []string{"1.5", "1000"},
++		},
++		{
++			name: "unmapped empty terms", agg: "umterms#terms", buckets: `[]`, want: []string{},
++		},
++		{
++			name: "small integer terms", agg: "terms",
++			buckets: `[{"key":0,"doc_count":1},{"key":1,"doc_count":1},{"key":42,"doc_count":1}]`,
++			want:    []string{"0", "1", "42"},
++		},
++		{
++			name: "untyped floating values", agg: "terms",
++			buckets: `[{"key":0.25,"doc_count":1},{"key":1e3,"doc_count":1},{"key":1.0,"doc_count":1}]`,
++			want:    []string{"0.25", "1000", "1"},
++		},
++	}
++	for _, test := range tests {
++		t.Run(test.name, func(t *testing.T) {
++			body := fmt.Sprintf(`{"timed_out":false,"_shards":{"total":1,"successful":1,"failed":0},"aggregations":{%q:{"buckets":%s}}}`, test.agg, test.buckets)
++			backend := newResponseBackend(t, http.StatusOK, body)
++			values, err := backend.Values(t.Context(), "counter", driver.Query{}, 10)
++			if err != nil {
++				t.Fatal(err)
++			}
++			if !slices.Equal(values, test.want) {
++				t.Fatalf("Values() = %q, want %q", values, test.want)
++			}
++		})
++	}
++}
++
++func TestStorageTermsMalformedTypedValues(t *testing.T) {
++	for _, kind := range []string{"lterms", "dterms"} {
++		t.Run(kind, func(t *testing.T) {
++			body := fmt.Sprintf(`{"timed_out":false,"_shards":{"total":1,"successful":1,"failed":0},"aggregations":{"%s#terms":{"buckets":[{"key":"not-a-number","doc_count":1}]}}}`, kind)
++			backend := newResponseBackend(t, http.StatusOK, body)
++			if _, err := backend.Values(t.Context(), "counter", driver.Query{}, 10); err == nil {
++				t.Fatal("Values() accepted a malformed numeric term key")
++			}
++		})
++	}
++}
++
++func TestStorageTermsLiveOpenSearch(t *testing.T) {
++	address := os.Getenv("HUATUO_TERMS_TEST_OPENSEARCH_URL")
++	if address == "" {
++		t.Skip("set HUATUO_TERMS_TEST_OPENSEARCH_URL to run the OpenSearch integration")
++	}
++	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
++	defer cancel()
++	index := "huatuo-terms-precision-" + strconv.FormatInt(time.Now().UnixNano(), 10)
++	backend, err := NewBackend(&Config{Addresses: []string{address}, Index: index})
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() {
++		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
++		defer cleanupCancel()
++		if err := backend.Close(cleanupCtx); err != nil {
++			t.Errorf("close backend: %v", err)
++		}
++		res, err := (esapi.IndicesDeleteRequest{Index: []string{index}}).Do(cleanupCtx, backend.transport)
++		if err != nil {
++			t.Errorf("delete integration index: %v", err)
++			return
++		}
++		defer res.Body.Close()
++		if res.IsError() && res.StatusCode != http.StatusNotFound {
++			t.Errorf("delete integration index: status %d", res.StatusCode)
++		}
++	})
++	res, err := (esapi.IndicesCreateRequest{
++		Index: index,
++		Body:  strings.NewReader(`{"mappings":{"properties":{"counter":{"type":"unsigned_long"}}}}`),
++	}).Do(ctx, backend.transport)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer res.Body.Close()
++	if res.IsError() {
++		t.Fatal(responseError("create integration index", index, res))
++	}
++	want := []string{"9007199254740992", "9007199254740993", "18446744073709551614", "18446744073709551615"}
++	for i, key := range want {
++		record := driver.Record{ID: strconv.Itoa(i), Data: []byte(`{"counter":` + key + `}`)}
++		if err := backend.Save(ctx, record, driver.SaveOptions{WaitForVisibility: true}); err != nil {
++			t.Fatal(err)
++		}
++	}
++	values, err := backend.Values(ctx, "counter", driver.Query{}, 10)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !slices.Equal(values, want) {
++		t.Fatalf("OpenSearch Values() = %q, want %q", values, want)
++	}
++}
