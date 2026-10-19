@@ -1,0 +1,49 @@
+name: HUATUO complete unit validation
+on:
+  push:
+    branches: [ci/huatuo-chrometrace-unit]
+permissions: {}
+jobs:
+  repository-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare the proposed source
+        run: |
+          set -euo pipefail
+          git init huatuo
+          git -C huatuo remote add origin https://github.com/ccfos/huatuo.git
+          git -C huatuo fetch --depth=1 origin 2b37ecae7cf2e2566ee0c882d6ae5b0f8edac4e8
+          git -C huatuo checkout --detach FETCH_HEAD
+          git -C huatuo apply ../.ci/huatuo-chrometrace-fix.patch
+          git -C huatuo add internal/profiling/formatter/chrometrace/chrometrace.go internal/profiling/formatter/chrometrace/fractional_test.go docs/key-feature/continuous-profiling_en.md docs/key-feature/continuous-profiling_zh.md
+          test "$(git -C huatuo write-tree)" = fd0a598564de12f0bd9bfda019f9f6480a5855ea
+      - name: Build the official development toolchain
+        working-directory: huatuo
+        run: docker build --target devel --progress plain -t huatuo-chrometrace-unit -f Dockerfile.devel .
+      - name: Run complete unit suite and compare failures with unchanged upstream
+        working-directory: huatuo
+        run: |
+          docker run --rm -v "$PWD:/workspace" -w /workspace huatuo-chrometrace-unit sh -ec '
+            git config --global --add safe.directory /workspace
+            go version
+            make build
+            set +e
+            GOMAXPROCS=2 GOFLAGS=-p=2 make unit > /workspace/complete-unit.log 2>&1
+            result=$?
+            set -e
+            cat /workspace/complete-unit.log
+            if [ "$result" -ne 0 ]; then
+              git reset --hard HEAD
+              set +e
+              GOMAXPROCS=2 GOFLAGS=-p=2 make unit > /workspace/baseline-unit.log 2>&1
+              baseline_result=$?
+              set -e
+              cat /workspace/baseline-unit.log
+              echo "FIXED_UNIT_EXIT=$result BASELINE_UNIT_EXIT=$baseline_result"
+              exit "$result"
+            fi
+          '
