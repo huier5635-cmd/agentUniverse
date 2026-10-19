@@ -71,9 +71,9 @@ jobs:
           PY
           git -C huatuo apply ../.ci/huatuo-terms-fix.patch
           git -C huatuo add docs/best-practice/storage_en.md docs/best-practice/storage_zh.md internal/storage/elasticsearch/elasticsearch.go internal/storage/elasticsearch/terms.go internal/storage/elasticsearch/terms_precision_test.go
-          test "$(git -C huatuo write-tree)" = 1ad0da6625ce44bef5db39d23665b86767130e30
+          test "$(git -C huatuo write-tree)" = b460efb54e14cd2df53ad9867305ea7622d6de6c
           cd huatuo
-          GOMAXPROCS=2 go test -p=2 -mod=vendor -count=1 ./internal/storage/elasticsearch
+          GOMAXPROCS=2 go test -p=2 -mod=vendor -count=1 -v ./internal/storage/elasticsearch
           GOMAXPROCS=2 go test -p=2 -mod=vendor -race -count=1 ./internal/storage/elasticsearch
           GOMAXPROCS=2 go vet -p=2 -mod=vendor ./internal/storage/elasticsearch
           git diff --check
@@ -98,7 +98,7 @@ jobs:
           git -C huatuo checkout --detach FETCH_HEAD
           git -C huatuo apply ../.ci/huatuo-terms-fix.patch
           git -C huatuo add docs/best-practice/storage_en.md docs/best-practice/storage_zh.md internal/storage/elasticsearch/elasticsearch.go internal/storage/elasticsearch/terms.go internal/storage/elasticsearch/terms_precision_test.go
-          test "$(git -C huatuo write-tree)" = 1ad0da6625ce44bef5db39d23665b86767130e30
+          test "$(git -C huatuo write-tree)" = b460efb54e14cd2df53ad9867305ea7622d6de6c
       - name: Build the official repository development toolchain
         working-directory: huatuo
         run: docker build --target devel --progress plain -t huatuo-terms-check -f Dockerfile.devel .

@@ -70,10 +70,10 @@ index 6bd5ec3..cf3eeb6 100644
  	default:
 diff --git a/internal/storage/elasticsearch/terms.go b/internal/storage/elasticsearch/terms.go
 new file mode 100644
-index 0000000..dbfd9fa
+index 0000000..ad86d8c
 --- /dev/null
 +++ b/internal/storage/elasticsearch/terms.go
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,124 @@
 +// Copyright 2026 The HuaTuo Authors
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -92,6 +92,7 @@ index 0000000..dbfd9fa
 +
 +import (
 +	"encoding/json"
++	"fmt"
 +	"io"
 +	"strings"
 +
@@ -133,16 +134,24 @@ index 0000000..dbfd9fa
 +	case "sterms":
 +		decoded = &types.StringTermsAggregate{}
 +	case "lterms":
++		if err := quoteLongTermKeys(aggregation); err != nil {
++			return nil, err
++		}
 +		decoded = &types.LongTermsAggregate{}
 +	case "dterms":
 +		decoded = &types.DoubleTermsAggregate{}
 +	case "umterms":
 +		decoded = &types.UnmappedTermsAggregate{}
 +	default:
++		if fields, ok := aggregation.(map[string]any); ok {
++			if _, hasBuckets := fields["buckets"]; !hasBuckets {
++				return nil, fmt.Errorf("unexpected terms aggregation type %q", kind)
++			}
++		}
 +		return aggregation, nil
 +	}
-+	// Keep SDK validation/formatting for known aggregations. Only its generic
-+	// fallback needs json.Number to preserve unsigned integer identifiers.
++	// Keep SDK validation/formatting after normalizing long keys. Generic
++	// fallback aggregations retain json.Number for unsigned integer keys.
 +	data, err := json.Marshal(aggregation)
 +	if err != nil {
 +		return nil, err
@@ -151,6 +160,29 @@ index 0000000..dbfd9fa
 +		return nil, err
 +	}
 +	return decoded, nil
++}
++
++func quoteLongTermKeys(aggregation types.Aggregate) error {
++	fields, ok := aggregation.(map[string]any)
++	if !ok {
++		return nil
++	}
++	buckets, _ := fields["buckets"].([]any)
++	for _, value := range buckets {
++		bucket, ok := value.(map[string]any)
++		if !ok {
++			continue
++		}
++		if number, ok := bucket["key"].(json.Number); ok {
++			if _, err := number.Int64(); err != nil {
++				return fmt.Errorf("invalid signed integer term key %q: %w", number, err)
++			}
++			// The SDK parses numeric long keys through float64, but its string
++			// path uses ParseInt and retains the complete signed integer.
++			bucket["key"] = number.String()
++		}
++	}
++	return nil
 +}
 +
 +func termString(value any) (string, error) {
