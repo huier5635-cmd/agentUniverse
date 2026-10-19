@@ -30,7 +30,7 @@ jobs:
       - name: Install native parsers and focused framework dependencies
         run: >-
           python -m pip install pytest==8.3.5 pydantic==2.6.4 langchain==0.1.20
-          langchain-community==0.0.38 loguru==0.7.2 tomli==2.2.1 opentelemetry-sdk==1.25.0
+          langchain-community==0.0.38 loguru==0.7.2 tomli==2.2.1 opentelemetry-sdk==1.25.0 Pillow==11.3.0
           tree-sitter==${{ matrix.tree_sitter }} tree-sitter-python==0.25.0
           tree-sitter-javascript==0.25.0 tree-sitter-java==0.23.5 tree-sitter-cpp==0.23.4
       - name: Prove six native regressions on exact upstream source
