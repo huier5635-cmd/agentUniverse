@@ -33,7 +33,7 @@ jobs:
           langchain-community==0.0.38 loguru==0.7.2 tomli==2.2.1 opentelemetry-sdk==1.25.0 Pillow==11.3.0
           tree-sitter==${{ matrix.tree_sitter }} tree-sitter-python==0.25.0
           tree-sitter-javascript==0.25.0 tree-sitter-java==0.23.5 tree-sitter-cpp==0.23.4
-      - name: Prove six native regressions on exact upstream source
+      - name: Prove recursion and method regressions on exact upstream source
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -55,9 +55,38 @@ jobs:
               root = ET.parse('before.xml').getroot()
               suites = list(root.iter('testsuite'))
               counts = {k: sum(int(s.get(k, 0)) for s in suites) for k in ('tests', 'failures', 'errors', 'skipped')}
-              assert counts == {'tests': 12, 'failures': 6, 'errors': 0, 'skipped': 0}, counts
-              assert all('RecursionError' in f.get('message', '') for f in root.iter('failure'))
-              print('Exact upstream native baseline: 6 RecursionError failures, 6 passed, 0 errors, 0 skips')
+              assert counts == {'tests': 18, 'failures': 12, 'errors': 0, 'skipped': 0}, counts
+              assert sum('RecursionError' in f.get('message', '') for f in root.iter('failure')) == 6
+              print('Exact upstream native baseline: 6 recursion + 6 method failures, 6 passed, 0 errors, 0 skips')
+          finally:
+              path.write_bytes(fixed)
+          assert path.read_bytes() == fixed
+          PY
+      - name: Prove method regressions on the previous public PR version
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess
+          import sys
+          import xml.etree.ElementTree as ET
+          path = Path('agentuniverse/agent/action/knowledge/doc_processor/code_ast_processor.py')
+          fixed = path.read_bytes()
+          original = subprocess.check_output(['git', 'show', '44e108dcb16c3d193acb6a6396eee8ca91ed8281:' + path.as_posix()])
+          try:
+              path.write_bytes(original)
+              result = subprocess.run([
+                  sys.executable, '-m', 'pytest',
+                  'tests/test_agentuniverse/unit/agent/action/knowledge/doc_processor/test_code_ast_traversal.py',
+                  '-q', '--rootdir', '.', '-o', 'addopts=', '-p', 'no:cacheprovider', '--tb=line',
+                  '--junitxml', 'previous.xml',
+              ])
+              assert result.returncode == 1, result.returncode
+              root = ET.parse('previous.xml').getroot()
+              suites = list(root.iter('testsuite'))
+              counts = {k: sum(int(s.get(k, 0)) for s in suites) for k in ('tests', 'failures', 'errors', 'skipped')}
+              assert counts == {'tests': 18, 'failures': 6, 'errors': 0, 'skipped': 0}, counts
+              assert not any('RecursionError' in f.get('message', '') for f in root.iter('failure'))
+              print('Previous public version baseline: 6 method failures, 12 passed, 0 errors, 0 skips')
           finally:
               path.write_bytes(fixed)
           assert path.read_bytes() == fixed
@@ -72,8 +101,8 @@ jobs:
           import xml.etree.ElementTree as ET
           suites = list(ET.parse('after.xml').getroot().iter('testsuite'))
           counts = {k: sum(int(s.get(k, 0)) for s in suites) for k in ('tests', 'failures', 'errors', 'skipped')}
-          assert counts == {'tests': 16, 'failures': 0, 'errors': 0, 'skipped': 0}, counts
-          print('Native fixed traversal: 16 passed, 0 failures, 0 errors, 0 skips')
+          assert counts == {'tests': 22, 'failures': 0, 'errors': 0, 'skipped': 0}, counts
+          print('Native fixed AST processing: 22 passed, 0 failures, 0 errors, 0 skips')
           PY
       - uses: actions/upload-artifact@v4
         if: always()
@@ -81,4 +110,5 @@ jobs:
           name: native-ast-${{ matrix.tree_sitter }}
           path: |
             before.xml
+            previous.xml
             after.xml
