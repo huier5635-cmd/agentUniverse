@@ -1,0 +1,77 @@
+name: Verify native dataset row processing
+
+on:
+  push:
+    branches: [verify/compass-dataset-rows-v1]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-rows:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: .github/native-dataset-rows
+    env:
+      BUNDLE_GEMFILE: ${{ github.workspace }}/.github/native-dataset-rows/test/gemfiles/lab_dataset_rows.gemfile
+      COMPASS_DATASET_ROWS_NATIVE: '1'
+      COMPASS_DATASET_DATABASE: compass_dataset_rows_test
+      COMPASS_DATASET_USER: compass_test
+      COMPASS_DATASET_PASSWORD: native_model_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3.6'
+          bundler: '2.5.22'
+      - name: Start a disposable MariaDB instance on loopback
+        run: |
+          docker run -d --name compass-dataset-rows-test -p 127.0.0.1:3306:3306 \
+            -e MARIADB_ROOT_PASSWORD=native_root_test \
+            -e MARIADB_DATABASE=compass_dataset_rows_test \
+            -e MARIADB_USER=compass_test -e MARIADB_PASSWORD=native_model_test \
+            mariadb:10.11
+      - name: Install focused gems at the application lockfile versions
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y default-libmysqlclient-dev
+          bundle install --jobs 4 --retry 2
+          ruby --version
+          bundle exec ruby -c app/graphql/mutations/create_lab_dataset.rb
+          bundle exec ruby -c test/models/lab_dataset_rows_test.rb
+          bundle exec ruby -c test/support/lab_dataset_rows_native.rb
+      - name: Wait for the actual database
+        run: |
+          python - <<'PY'
+          import subprocess
+          import time
+          for attempt in range(60):
+              result = subprocess.run([
+                  'docker', 'exec', 'compass-dataset-rows-test', 'mariadb',
+                  '-ucompass_test', '-pnative_model_test',
+                  '-Dcompass_dataset_rows_test', '-e', 'SELECT VERSION()',
+              ], capture_output=True, text=True)
+              if result.returncode == 0:
+                  print(result.stdout)
+                  break
+              time.sleep(1)
+          else:
+              raise RuntimeError(result.stderr)
+          PY
+      - name: Prove baseline and fixed behavior through actual GraphQL inputs and models
+        run: |
+          python verify_rows.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-dataset-row-proof
+          path: |
+            .github/native-dataset-rows/before.txt
+            .github/native-dataset-rows/after.txt
+            .github/native-dataset-rows/test/gemfiles/lab_dataset_rows.gemfile.lock
+      - name: Remove the test-only container
+        if: always()
+        run: docker rm -f compass-dataset-rows-test
