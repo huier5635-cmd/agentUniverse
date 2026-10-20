@@ -1,111 +1,43 @@
-name: HUATUO SQLite result allocation validation
+name: OpenCloudOS kernel validation feasibility
 on:
   push:
-    branches: [ci/huatuo-values-allocation]
+    branches: [ci/opencloudos-stat-no-full-hz]
   workflow_dispatch:
 permissions: {}
 jobs:
-  regressions:
+  feasibility:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 10
+    env:
+      GIT_TERMINAL_PROMPT: '0'
     steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.24.3'
-          cache: false
-      - name: Prepare exact upstream and combined regressions
+      - name: Inspect build and virtualization support
         run: |
           set -euo pipefail
-          git init huatuo
-          git -C huatuo remote add origin https://github.com/ccfos/huatuo.git
-          git -C huatuo fetch --depth=1 origin 07e184e7bf1af789e2b6aaf74b253acfb4ba6c46
-          git -C huatuo checkout --detach FETCH_HEAD
-          test "$(git -C huatuo rev-parse HEAD)" = 07e184e7bf1af789e2b6aaf74b253acfb4ba6c46
-          git -C huatuo apply ../.ci/huatuo-query-regression.patch
-          go version
-          uname -a
-      - name: Reproduce against original production source
+          uname -m
+          getconf _NPROCESSORS_ONLN
+          df -Pk .
+          for build_tool in gcc make flex bison bc ld objcopy cpio; do
+            command -v "$build_tool" || true
+          done
+          if test -c /dev/kvm; then
+            echo KVM_DEVICE_PRESENT=yes
+            ls -l /dev/kvm
+          else
+            echo KVM_DEVICE_PRESENT=no
+            exit 1
+          fi
+      - name: Verify real KVM initialization
         run: |
           set -euo pipefail
-          cd huatuo
-          set +e
-          GOMAXPROCS=2 go test -p=2 -mod=vendor -json -count=1 ./internal/storage/sqlite -run '^TestSQLite(Values|Query)Allocation$' > ../query-original.jsonl
-          result=$?
-          set -e
-          test "$result" -eq 1
-          cd ..
-          python3 .ci/huatuo-result-verify.py query-original.jsonl original
-      - name: Benchmark original query allocation
-        working-directory: huatuo
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86
+          printf 'info kvm\nquit\n' | sudo qemu-system-x86_64 \
+            -machine q35,accel=kvm -cpu host -smp 2 -m 256 \
+            -nodefaults -display none -serial none -monitor stdio -S
+      - name: Resolve actual OpenCloudOS target branch
         run: |
           set -euo pipefail
-          GOMAXPROCS=2 go test -p=2 -mod=vendor -run '^$' -bench '^BenchmarkSQLiteQueryAllocation$' -benchmem -benchtime=5x -count=3 ./internal/storage/sqlite | tee ../query-benchmark-original.txt
-      - name: Verify the previously published Values-only implementation
-        run: |
-          set -euo pipefail
-          git -C huatuo apply ../.ci/huatuo-query-parent.patch
-          cd huatuo
-          test "$(git hash-object internal/storage/sqlite/sqlite.go)" = 48131119da064f59a21af6f744e73fbb81117e2e
-          set +e
-          GOMAXPROCS=2 go test -p=2 -mod=vendor -json -count=1 ./internal/storage/sqlite -run '^TestSQLite(Values|Query)Allocation$' > ../query-published.jsonl
-          result=$?
-          set -e
-          test "$result" -eq 1
-          cd ..
-          python3 .ci/huatuo-result-verify.py query-published.jsonl published
-      - name: Apply complete fix and test the entire SQLite package
-        run: |
-          set -euo pipefail
-          git -C huatuo restore internal/storage/sqlite/sqlite.go
-          git -C huatuo apply ../.ci/huatuo-query-fix.patch
-          cd huatuo
-          GOMAXPROCS=2 go test -p=2 -mod=vendor -json -count=1 ./internal/storage/sqlite > ../query-fixed.jsonl
-          cd ..
-          python3 .ci/huatuo-result-verify.py query-fixed.jsonl fixed
-          cd huatuo
-          GOMAXPROCS=2 go test -p=2 -mod=vendor -race -count=1 ./internal/storage/sqlite
-          GOMAXPROCS=2 go vet -p=2 -mod=vendor ./internal/storage/sqlite
-          git diff --check
-      - name: Benchmark fixed query allocation
-        working-directory: huatuo
-        run: |
-          set -euo pipefail
-          GOMAXPROCS=2 go test -p=2 -mod=vendor -run '^$' -bench '^BenchmarkSQLiteQueryAllocation$' -benchmem -benchtime=5x -count=3 ./internal/storage/sqlite | tee ../query-benchmark-fixed.txt
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: sqlite-result-allocation-proof
-          path: |
-            query-*.jsonl
-            query-benchmark-*.txt
-  repository-check:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Prepare exact source and complete fix
-        run: |
-          set -euo pipefail
-          git init huatuo
-          git -C huatuo remote add origin https://github.com/ccfos/huatuo.git
-          git -C huatuo fetch --depth=1 origin 07e184e7bf1af789e2b6aaf74b253acfb4ba6c46
-          git -C huatuo checkout --detach FETCH_HEAD
-          git -C huatuo apply ../.ci/huatuo-query-regression.patch
-          git -C huatuo apply ../.ci/huatuo-query-fix.patch
-          git -C huatuo add internal/storage/sqlite/sqlite.go internal/storage/sqlite/values_allocation_test.go internal/storage/sqlite/query_allocation_test.go
-      - name: Build the repository development toolchain
-        working-directory: huatuo
-        run: docker build --target devel --progress plain -t huatuo-query-check -f Dockerfile.devel .
-      - name: Run the required repository build and check
-        working-directory: huatuo
-        run: |
-          docker run --rm -v "$PWD:/workspace" -w /workspace huatuo-query-check sh -ec '
-            git config --global --add safe.directory /workspace
-            make build
-            make check
-          '
+          timeout 90s git ls-remote --exit-code --heads \
+            https://gitee.com/OpenCloudOS/OpenCloudOS-Kernel.git \
+            refs/heads/linux-6.6/devel
