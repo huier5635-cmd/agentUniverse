@@ -1,7 +1,7 @@
-name: HUATUO numeric roundtrip validation
+name: HUATUO SQLite values allocation validation
 on:
   push:
-    branches: [ci/huatuo-numeric-filter]
+    branches: [ci/huatuo-values-allocation]
   workflow_dispatch:
 permissions: {}
 jobs:
@@ -16,44 +16,77 @@ jobs:
         with:
           go-version: '1.24.3'
           cache: false
-      - name: Prepare exact upstream source
+      - name: Prepare exact upstream source and regression
         run: |
           set -euo pipefail
           git init huatuo
           git -C huatuo remote add origin https://github.com/ccfos/huatuo.git
-          git -C huatuo fetch --depth=1 origin 2b37ecae7cf2e2566ee0c882d6ae5b0f8edac4e8
+          git -C huatuo fetch --depth=1 origin 07e184e7bf1af789e2b6aaf74b253acfb4ba6c46
           git -C huatuo checkout --detach FETCH_HEAD
-          test "$(git -C huatuo rev-parse HEAD)" = 2b37ecae7cf2e2566ee0c882d6ae5b0f8edac4e8
+          test "$(git -C huatuo rev-parse HEAD)" = 07e184e7bf1af789e2b6aaf74b253acfb4ba6c46
+          git -C huatuo apply ../.ci/huatuo-values-regression.patch
           go version
           uname -a
-      - name: Reproduce against unchanged upstream
+      - name: Reproduce without modifying production source
         run: |
           set -euo pipefail
-          git -C huatuo apply ../.ci/huatuo-numeric-regression.patch
           cd huatuo
           set +e
-          GOMAXPROCS=2 go test -p=2 -mod=vendor -count=1 ./internal/storage/driver ./internal/storage/sqlite ./internal/storage/elasticsearch -run 'TestNormalizeFilterJSONNumbers|TestSQLiteReadBackNumericPredicates|TestBuildClauseComparisons|TestBuildClauseRangePrecision' -v > ../baseline.log 2>&1
+          GOMAXPROCS=2 go test -p=2 -mod=vendor -json -count=1 ./internal/storage/sqlite -run '^TestSQLiteValuesAllocation$' > ../baseline.jsonl
           result=$?
           set -e
-          cat ../baseline.log
-          test "$result" -ne 0
-          grep -F 'unsupported comparison value of type json.Number' ../baseline.log
-      - name: Apply the exact fix and run all affected package tests
+          test "$result" -eq 1
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          rows = [json.loads(line) for line in Path('../baseline.jsonl').read_text().splitlines()]
+          cases = {r['Test'].split('/')[-1]: r['Action'] for r in rows if '/' in r.get('Test', '') and r['Action'] in ('pass', 'fail', 'skip')}
+          failures = {'empty_with_maximum_limit', 'sparse_with_maximum_limit', 'filtered_with_maximum_limit', 'grows_with_actual_results', 'ignores_record_pagination'}
+          assert len(cases) == 8, cases
+          assert {case for case, status in cases.items() if status == 'fail'} == failures, cases
+          assert sum(status == 'pass' for status in cases.values()) == 3, cases
+          assert not any(r['Action'] in ('build-fail', 'skip') for r in rows), rows
+          output = ''.join(r.get('Output', '') for r in rows)
+          assert output.count('panicked: runtime error: makeslice: cap out of range') == 5, output
+          print('Original production source: five capacity panics; three controls pass.')
+          PY
+      - name: Benchmark original allocation
+        working-directory: huatuo
         run: |
           set -euo pipefail
-          git -C huatuo reset --hard HEAD
-          python3 - <<'PY'
-          from pathlib import Path
-          extra = Path('huatuo/internal/storage/sqlite/number_roundtrip_test.go')
-          if extra.exists():
-              extra.unlink()
-          PY
-          git -C huatuo apply ../.ci/huatuo-numeric-fix.patch
+          GOMAXPROCS=2 go test -p=2 -mod=vendor -run '^$' -bench '^BenchmarkSQLiteValuesSparseLimit$' -benchmem -benchtime=5x -count=3 ./internal/storage/sqlite | tee ../benchmark-original.txt
+      - name: Apply the exact fix and run all SQLite tests
+        run: |
+          set -euo pipefail
+          git -C huatuo apply ../.ci/huatuo-values-fix.patch
           cd huatuo
-          GOMAXPROCS=2 go test -p=2 -mod=vendor -count=1 ./internal/storage/driver ./internal/storage/sqlite ./internal/storage/elasticsearch
-          GOMAXPROCS=2 go test -p=2 -mod=vendor -race -count=1 ./internal/storage/driver ./internal/storage/sqlite ./internal/storage/elasticsearch
-          GOMAXPROCS=2 go vet -p=2 -mod=vendor ./internal/storage/driver ./internal/storage/sqlite ./internal/storage/elasticsearch
+          GOMAXPROCS=2 go test -p=2 -mod=vendor -json -count=1 ./internal/storage/sqlite > ../fixed.jsonl
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          rows = [json.loads(line) for line in Path('../fixed.jsonl').read_text().splitlines()]
+          assert not any(r['Action'] in ('fail', 'build-fail', 'skip') for r in rows), rows
+          cases = [r for r in rows if r.get('Test', '').startswith('TestSQLiteValuesAllocation/') and r['Action'] == 'pass']
+          assert len(cases) == 8, cases
+          print('Fixed SQLite package: all cases pass; no failures/build errors/skips.')
+          print('Passed test events:', sum(r['Action'] == 'pass' and 'Test' in r for r in rows))
+          PY
+          GOMAXPROCS=2 go test -p=2 -mod=vendor -race -count=1 ./internal/storage/sqlite
+          GOMAXPROCS=2 go vet -p=2 -mod=vendor ./internal/storage/sqlite
           git diff --check
+      - name: Benchmark fixed allocation
+        working-directory: huatuo
+        run: |
+          set -euo pipefail
+          GOMAXPROCS=2 go test -p=2 -mod=vendor -run '^$' -bench '^BenchmarkSQLiteValuesSparseLimit$' -benchmem -benchtime=5x -count=3 ./internal/storage/sqlite | tee ../benchmark-fixed.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sqlite-values-proof
+          path: |
+            baseline.jsonl
+            fixed.jsonl
+            benchmark-*.txt
   repository-check:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -66,17 +99,18 @@ jobs:
           set -euo pipefail
           git init huatuo
           git -C huatuo remote add origin https://github.com/ccfos/huatuo.git
-          git -C huatuo fetch --depth=1 origin 2b37ecae7cf2e2566ee0c882d6ae5b0f8edac4e8
+          git -C huatuo fetch --depth=1 origin 07e184e7bf1af789e2b6aaf74b253acfb4ba6c46
           git -C huatuo checkout --detach FETCH_HEAD
-          git -C huatuo apply ../.ci/huatuo-numeric-fix.patch
-          git -C huatuo add docs/best-practice/storage_en.md docs/best-practice/storage_zh.md internal/storage/driver/filter.go internal/storage/driver/filter_test.go internal/storage/sqlite/number_roundtrip_test.go internal/storage/elasticsearch/dsl_test.go
+          git -C huatuo apply ../.ci/huatuo-values-regression.patch
+          git -C huatuo apply ../.ci/huatuo-values-fix.patch
+          git -C huatuo add internal/storage/sqlite/sqlite.go internal/storage/sqlite/values_allocation_test.go
       - name: Build the repository development toolchain
         working-directory: huatuo
-        run: docker build --target devel --progress plain -t huatuo-numeric-check -f Dockerfile.devel .
-      - name: Run the repository build and required check
+        run: docker build --target devel --progress plain -t huatuo-values-check -f Dockerfile.devel .
+      - name: Run the required repository build and check
         working-directory: huatuo
         run: |
-          docker run --rm -v "$PWD:/workspace" -w /workspace huatuo-numeric-check sh -ec '
+          docker run --rm -v "$PWD:/workspace" -w /workspace huatuo-values-check sh -ec '
             git config --global --add safe.directory /workspace
             make build
             make check
