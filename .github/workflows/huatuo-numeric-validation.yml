@@ -38,7 +38,8 @@ jobs:
           gcc -static -O2 -Wall -Wextra -Werror -D_GNU_SOURCE \
             kernel/tools/testing/selftests/proc/proc-stat-no-full-hz.c \
             -o stat-selftest
-          cat .ci/opencloudos-tests.patch .ci/opencloudos-interface.patch > combined.patch
+          git apply --stat .ci/opencloudos-tests.patch .ci/opencloudos-interface.patch > combined.patch
+          cat .ci/opencloudos-tests.patch .ci/opencloudos-interface.patch >> combined.patch
           kernel/scripts/checkpatch.pl --no-tree --strict --no-signoff combined.patch
       - name: Configure and compile the actual unmodified kernel
         run: |
