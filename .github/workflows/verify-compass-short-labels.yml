@@ -1,0 +1,77 @@
+name: Verify native ShortenedLabel lifecycle
+
+on:
+  push:
+    branches: [verify/compass-short-label-lifecycle-v1]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-model:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: .github/native-short-labels
+    env:
+      BUNDLE_GEMFILE: ${{ github.workspace }}/.github/native-short-labels/test/gemfiles/shortened_label.gemfile
+      COMPASS_SHORT_LABEL_NATIVE: '1'
+      COMPASS_SHORT_LABEL_DATABASE: compass_short_label_test
+      COMPASS_SHORT_LABEL_USER: compass_test
+      COMPASS_SHORT_LABEL_PASSWORD: native_model_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3.6'
+          bundler: '2.5.22'
+      - name: Start a disposable MariaDB instance on loopback
+        run: |
+          docker run -d --name compass-short-label-test -p 127.0.0.1:3306:3306 \
+            -e MARIADB_ROOT_PASSWORD=native_root_test \
+            -e MARIADB_DATABASE=compass_short_label_test \
+            -e MARIADB_USER=compass_test -e MARIADB_PASSWORD=native_model_test \
+            mariadb:10.11
+      - name: Install focused gems at the application lockfile versions
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y default-libmysqlclient-dev
+          bundle install --jobs 4 --retry 2
+          ruby --version
+          bundle exec ruby -c app/models/shortened_label.rb
+          bundle exec ruby -c test/models/shortened_label_test.rb
+          bundle exec ruby -c test/support/shortened_label_native.rb
+      - name: Wait for the actual database
+        run: |
+          python - <<'PY'
+          import subprocess
+          import time
+          for attempt in range(60):
+              result = subprocess.run([
+                  'docker', 'exec', 'compass-short-label-test', 'mariadb',
+                  '-ucompass_test', '-pnative_model_test',
+                  '-Dcompass_short_label_test', '-e', 'SELECT VERSION()',
+              ], capture_output=True, text=True)
+              if result.returncode == 0:
+                  print(result.stdout)
+                  break
+              time.sleep(1)
+          else:
+              raise RuntimeError(result.stderr)
+          PY
+      - name: Prove baseline and fixed behavior through the actual model
+        run: |
+          python verify_lifecycle.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-shortened-label-proof
+          path: |
+            .github/native-short-labels/before.txt
+            .github/native-short-labels/after.txt
+            .github/native-short-labels/test/gemfiles/shortened_label.gemfile.lock
+      - name: Remove the test-only container
+        if: always()
+        run: docker rm -f compass-short-label-test
