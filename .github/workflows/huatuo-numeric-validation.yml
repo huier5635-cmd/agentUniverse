@@ -1,13 +1,15 @@
-name: HUATUO SQLite result allocation validation
+name: HUATUO standalone SQLite allocation reproduction
 on:
   push:
-    branches: [ci/huatuo-values-allocation]
+    branches: [ci/huatuo-sqlite-manual-repro]
   workflow_dispatch:
 permissions: {}
 jobs:
-  regressions:
+  reproduce:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    env:
+      GOMAXPROCS: '2'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -16,96 +18,56 @@ jobs:
         with:
           go-version: '1.24.3'
           cache: false
-      - name: Prepare exact upstream and combined regressions
+      - name: Prepare exact official source and standalone caller
         run: |
           set -euo pipefail
           git init huatuo
           git -C huatuo remote add origin https://github.com/ccfos/huatuo.git
           git -C huatuo fetch --depth=1 origin 07e184e7bf1af789e2b6aaf74b253acfb4ba6c46
           git -C huatuo checkout --detach FETCH_HEAD
-          test "$(git -C huatuo rev-parse HEAD)" = 07e184e7bf1af789e2b6aaf74b253acfb4ba6c46
-          git -C huatuo apply ../.ci/huatuo-query-regression.patch
+          test "$(git -C huatuo hash-object internal/storage/sqlite/sqlite.go)" = 5d66dd3a9ddb3e4840a22a5f0e8bd0bb1dda961e
+          mkdir -p huatuo/.repro/sqlite-cap
+          cp .ci/huatuo-manual-repro.go huatuo/.repro/sqlite-cap/main.go
+          gofmt -w huatuo/.repro/sqlite-cap/main.go
           go version
-          uname -a
-      - name: Reproduce against original production source
+      - name: Compile real original backend and reproduce the two panics
         run: |
           set -euo pipefail
-          cd huatuo
-          set +e
-          GOMAXPROCS=2 go test -p=2 -mod=vendor -json -count=1 ./internal/storage/sqlite -run '^TestSQLite(Values|Query)Allocation$' > ../query-original.jsonl
-          result=$?
-          set -e
-          test "$result" -eq 1
-          cd ..
-          python3 .ci/huatuo-result-verify.py query-original.jsonl original
-      - name: Benchmark original query allocation
-        working-directory: huatuo
+          (cd huatuo && go build -p=2 -mod=vendor -o ../sqlite-cap-original ./.repro/sqlite-cap)
+          for operation in query values; do
+            ./sqlite-cap-original "$operation" normal | tee "sqlite-manual-original-${operation}-normal.log"
+            set +e
+            ./sqlite-cap-original "$operation" max > "sqlite-manual-original-${operation}-max.log" 2>&1
+            result=$?
+            set -e
+            test "$result" -eq 2
+            grep -F 'panic: runtime error: makeslice: cap out of range' "sqlite-manual-original-${operation}-max.log"
+          done
+      - name: Compile exact PR production code and repeat the same caller
         run: |
           set -euo pipefail
-          GOMAXPROCS=2 go test -p=2 -mod=vendor -run '^$' -bench '^BenchmarkSQLiteQueryAllocation$' -benchmem -benchtime=5x -count=3 ./internal/storage/sqlite | tee ../query-benchmark-original.txt
-      - name: Verify the previously published Values-only implementation
-        run: |
-          set -euo pipefail
-          git -C huatuo apply ../.ci/huatuo-query-parent.patch
-          cd huatuo
-          test "$(git hash-object internal/storage/sqlite/sqlite.go)" = 48131119da064f59a21af6f744e73fbb81117e2e
-          set +e
-          GOMAXPROCS=2 go test -p=2 -mod=vendor -json -count=1 ./internal/storage/sqlite -run '^TestSQLite(Values|Query)Allocation$' > ../query-published.jsonl
-          result=$?
-          set -e
-          test "$result" -eq 1
-          cd ..
-          python3 .ci/huatuo-result-verify.py query-published.jsonl published
-      - name: Apply complete fix and test the entire SQLite package
-        run: |
-          set -euo pipefail
-          git -C huatuo restore internal/storage/sqlite/sqlite.go
+          git -C huatuo apply --check ../.ci/huatuo-query-fix.patch
           git -C huatuo apply ../.ci/huatuo-query-fix.patch
-          cd huatuo
-          GOMAXPROCS=2 go test -p=2 -mod=vendor -json -count=1 ./internal/storage/sqlite > ../query-fixed.jsonl
-          cd ..
-          python3 .ci/huatuo-result-verify.py query-fixed.jsonl fixed
-          cd huatuo
-          GOMAXPROCS=2 go test -p=2 -mod=vendor -race -count=1 ./internal/storage/sqlite
-          GOMAXPROCS=2 go vet -p=2 -mod=vendor ./internal/storage/sqlite
-          git diff --check
-      - name: Benchmark fixed query allocation
+          test "$(git -C huatuo hash-object internal/storage/sqlite/sqlite.go)" = 07ff02c5abd0626af45162a07a192f77b527c515
+          (cd huatuo && go build -p=2 -mod=vendor -o ../sqlite-cap-fixed ./.repro/sqlite-cap)
+          for operation in query values; do
+            for bound in normal max; do
+              ./sqlite-cap-fixed "$operation" "$bound" | tee "sqlite-manual-fixed-${operation}-${bound}.log"
+              grep -F "$operation $bound: err=<nil>" "sqlite-manual-fixed-${operation}-${bound}.log"
+            done
+          done
+      - name: Run existing SQLite tests without adding the allocation unit files
         working-directory: huatuo
         run: |
           set -euo pipefail
-          GOMAXPROCS=2 go test -p=2 -mod=vendor -run '^$' -bench '^BenchmarkSQLiteQueryAllocation$' -benchmem -benchtime=5x -count=3 ./internal/storage/sqlite | tee ../query-benchmark-fixed.txt
+          test ! -e internal/storage/sqlite/values_allocation_test.go
+          test ! -e internal/storage/sqlite/query_allocation_test.go
+          go test -p=2 -mod=vendor -count=1 ./internal/storage/sqlite
+          go test -p=2 -mod=vendor -race -count=1 ./internal/storage/sqlite
+          go vet -p=2 -mod=vendor ./internal/storage/sqlite
+          git diff --check
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: sqlite-result-allocation-proof
-          path: |
-            query-*.jsonl
-            query-benchmark-*.txt
-  repository-check:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Prepare exact source and complete fix
-        run: |
-          set -euo pipefail
-          git init huatuo
-          git -C huatuo remote add origin https://github.com/ccfos/huatuo.git
-          git -C huatuo fetch --depth=1 origin 07e184e7bf1af789e2b6aaf74b253acfb4ba6c46
-          git -C huatuo checkout --detach FETCH_HEAD
-          git -C huatuo apply ../.ci/huatuo-query-regression.patch
-          git -C huatuo apply ../.ci/huatuo-query-fix.patch
-          git -C huatuo add internal/storage/sqlite/sqlite.go internal/storage/sqlite/values_allocation_test.go internal/storage/sqlite/query_allocation_test.go
-      - name: Build the repository development toolchain
-        working-directory: huatuo
-        run: docker build --target devel --progress plain -t huatuo-query-check -f Dockerfile.devel .
-      - name: Run the required repository build and check
-        working-directory: huatuo
-        run: |
-          docker run --rm -v "$PWD:/workspace" -w /workspace huatuo-query-check sh -ec '
-            git config --global --add safe.directory /workspace
-            make build
-            make check
-          '
+          name: sqlite-standalone-reproduction
+          path: sqlite-manual-*.log
