@@ -1,0 +1,42 @@
+name: HUATUO production-only SQLite repository check
+on:
+  push:
+    branches: [ci/huatuo-sqlite-production-check]
+  workflow_dispatch:
+permissions: {}
+jobs:
+  repository-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare exact final production-only change
+        run: |
+          set -euo pipefail
+          git init huatuo
+          git -C huatuo remote add origin https://github.com/ccfos/huatuo.git
+          git -C huatuo fetch --depth=1 origin 07e184e7bf1af789e2b6aaf74b253acfb4ba6c46
+          git -C huatuo checkout --detach FETCH_HEAD
+          git -C huatuo apply --check ../.ci/huatuo-query-fix.patch
+          git -C huatuo apply ../.ci/huatuo-query-fix.patch
+          test "$(git -C huatuo hash-object internal/storage/sqlite/sqlite.go)" = 07ff02c5abd0626af45162a07a192f77b527c515
+          test ! -e huatuo/internal/storage/sqlite/query_allocation_test.go
+          test ! -e huatuo/internal/storage/sqlite/values_allocation_test.go
+          test "$(git -C huatuo diff --name-only)" = internal/storage/sqlite/sqlite.go
+          git -C huatuo diff --check
+          git -C huatuo add internal/storage/sqlite/sqlite.go
+      - name: Build the repository development toolchain
+        working-directory: huatuo
+        run: docker build --target devel --progress plain -t huatuo-production-check -f Dockerfile.devel .
+      - name: Run the required repository build and check before revision commit
+        working-directory: huatuo
+        run: |
+          docker run --rm -v "$PWD:/workspace" -w /workspace huatuo-production-check sh -ec '
+            git config --global --add safe.directory /workspace
+            make build
+            make check
+            test "$(git hash-object internal/storage/sqlite/sqlite.go)" = 07ff02c5abd0626af45162a07a192f77b527c515
+            git diff --exit-code
+          '
