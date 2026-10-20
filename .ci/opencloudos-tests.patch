@@ -140,7 +140,7 @@ new file mode 100644
 +
 +static int namespace_child(void)
 +{
-+	const char offset[] = "monotonic 123 0\n";
++	static const char offset[] = "monotonic 123 0\n";
 +	int fd, status;
 +	pid_t child;
 +

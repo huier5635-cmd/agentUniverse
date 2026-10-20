@@ -119,3 +119,14 @@ new file mode 100644
 +                Values have USER_HZ granularity. Intervals should be long
 +                enough that truncation to clock ticks is insignificant.
 +Users:          CPU-usage monitoring tools on tickless systems
+diff --git a/MAINTAINERS b/MAINTAINERS
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -17347,6 +17347,7 @@
+ L:	linux-kernel@vger.kernel.org
+ L:	linux-fsdevel@vger.kernel.org
+ S:	Maintained
++F:	Documentation/ABI/testing/procfs-stat-no-full-hz
+ F:	Documentation/filesystems/proc.rst
+ F:	fs/proc/
+ F:	include/linux/proc_fs.h
