@@ -13,7 +13,7 @@ diff --git a/fs/proc/stat.c b/fs/proc/stat.c
  	.proc_release	= single_release,
  };
  
-+#ifdef CONFIG_NO_HZ_FULL
++#ifdef CONFIG_NO_HZ_COMMON
 +static int show_stat_no_full_hz(struct seq_file *p, void *v)
 +{
 +	struct timespec64 uptime;
@@ -57,7 +57,7 @@ diff --git a/fs/proc/stat.c b/fs/proc/stat.c
  {
  	proc_create("stat", 0, NULL, &stat_proc_ops);
  
-+#ifdef CONFIG_NO_HZ_FULL
++#ifdef CONFIG_NO_HZ_COMMON
 +	proc_create("stat_no_full_hz", 0, NULL, &stat_no_full_hz_proc_ops);
 +#endif
 +
@@ -68,13 +68,15 @@ diff --git a/Documentation/ABI/testing/procfs-stat-no-full-hz b/Documentation/AB
 new file mode 100644
 --- /dev/null
 +++ b/Documentation/ABI/testing/procfs-stat-no-full-hz
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,52 @@
 +What:           /proc/stat_no_full_hz
 +Date:           October 2026
 +KernelVersion:  6.6
 +Contact:        https://gitee.com/OpenCloudOS/OpenCloudOS-Kernel/issues/IDL1UN
 +Description:
-+                Available with CONFIG_NO_HZ_FULL. This read-only file reports
++                Available with CONFIG_NO_HZ_COMMON, selected by NO_HZ_IDLE
++                or NO_HZ_FULL. Both modes provide the accounted idle times
++                through get_cpu_idle_time_us(). This read-only file reports
 +                the same records, CPU fields and units as /proc/stat, followed
 +                by one additional record:
 +
