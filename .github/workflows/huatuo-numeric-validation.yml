@@ -47,7 +47,8 @@ jobs:
           ock_build="$PWD/ock-build"
           make -C kernel O="$ock_build" x86_64_defconfig
           kernel/scripts/config --file "$ock_build/.config" \
-            --enable SMP --set-val NR_CPUS 8 --enable NO_HZ_FULL \
+            --enable SMP --set-val NR_CPUS 8 \
+            --disable HZ_PERIODIC --disable NO_HZ_FULL --enable NO_HZ_IDLE \
             --disable CONTEXT_TRACKING_USER_FORCE \
             --disable HZ_250 --enable HZ_1000 --set-val HZ 1000 \
             --enable NAMESPACES --enable TIME_NS --enable POSIX_TIMERS \
@@ -55,12 +56,13 @@ jobs:
             --enable SYSFS --enable TMPFS \
             --enable SERIAL_8250 --enable SERIAL_8250_CONSOLE
           make -C kernel O="$ock_build" olddefconfig
-          grep -E '^(CONFIG_(SMP|NO_HZ_FULL|HZ|HZ_1000|NAMESPACES|TIME_NS|POSIX_TIMERS)=|# CONFIG_CONTEXT_TRACKING_USER_FORCE)' \
+          grep -E '^(CONFIG_(SMP|NO_HZ_COMMON|NO_HZ_IDLE|NO_HZ_FULL|HZ|HZ_1000|NAMESPACES|TIME_NS|POSIX_TIMERS)=|# CONFIG_CONTEXT_TRACKING_USER_FORCE)' \
             "$ock_build/.config" | tee kernel-test-config.txt
-          grep -qx 'CONFIG_NO_HZ_FULL=y' "$ock_build/.config"
+          grep -qx 'CONFIG_NO_HZ_COMMON=y' "$ock_build/.config"
+          grep -qx 'CONFIG_NO_HZ_IDLE=y' "$ock_build/.config"
           grep -qx 'CONFIG_TIME_NS=y' "$ock_build/.config"
           grep -qx 'CONFIG_HZ=1000' "$ock_build/.config"
-          grep -qx '# CONFIG_CONTEXT_TRACKING_USER_FORCE is not set' "$ock_build/.config"
+          if grep -qx 'CONFIG_CONTEXT_TRACKING_USER_FORCE=y' "$ock_build/.config"; then exit 1; fi
           make -C kernel O="$ock_build" -j"$(nproc)" bzImage
           cp "$ock_build/arch/x86/boot/bzImage" original-bzImage
       - name: Prepare a minimal real guest filesystem
@@ -82,7 +84,7 @@ jobs:
             -machine q35,accel=kvm -cpu host -smp 2 -m 1024 \
             -nodefaults -display none -serial stdio -monitor none -no-reboot \
             -kernel original-bzImage -initrd guest.cpio.gz \
-            -append 'console=ttyS0 rdinit=/init panic=1 nohz_full=1 rcu_nocbs=1 oc_profile=original' \
+            -append 'console=ttyS0 rdinit=/init panic=1 nohz=on oc_profile=original' \
             | tee original-guest.log
           grep -q 'OC_SELFTEST_EXIT=4' original-guest.log
           grep -q 'OC_GUEST_DONE profile=original' original-guest.log
@@ -101,18 +103,19 @@ jobs:
             -machine q35,accel=kvm -cpu host -smp 2 -m 1024 \
             -nodefaults -display none -serial stdio -monitor none -no-reboot \
             -kernel fixed-bzImage -initrd guest.cpio.gz \
-            -append 'console=ttyS0 rdinit=/init panic=1 nohz_full=1 rcu_nocbs=1 oc_profile=fixed' \
+            -append 'console=ttyS0 rdinit=/init panic=1 nohz=on oc_profile=fixed' \
             | tee fixed-guest.log
           grep -q 'OC_SELFTEST_EXIT=0' fixed-guest.log
           grep -q 'OC_GUEST_DONE profile=fixed' fixed-guest.log
           if grep -Eq 'not ok|# SKIP|Kernel panic' fixed-guest.log; then exit 1; fi
-      - name: Compile the NO_HZ_FULL-disabled configuration
+      - name: Compile the tickless-disabled configuration
         run: |
           set -euo pipefail
           make -C kernel O="$PWD/ock-build-disabled" x86_64_defconfig
           kernel/scripts/config --file "$PWD/ock-build-disabled/.config" \
-            --disable NO_HZ_FULL --enable NO_HZ_IDLE
+            --disable NO_HZ --disable NO_HZ_FULL --disable NO_HZ_IDLE --enable HZ_PERIODIC
           make -C kernel O="$PWD/ock-build-disabled" olddefconfig
+          if grep -qx 'CONFIG_NO_HZ_COMMON=y' ock-build-disabled/.config; then exit 1; fi
           make -C kernel O="$PWD/ock-build-disabled" -j"$(nproc)" fs/proc/stat.o
           strings ock-build-disabled/fs/proc/stat.o > nohz-disabled-strings.txt
           if grep -q 'stat_no_full_hz' nohz-disabled-strings.txt; then exit 1; fi
