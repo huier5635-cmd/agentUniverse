@@ -1,0 +1,14 @@
+diff --git a/internal/storage/sqlite/sqlite.go b/internal/storage/sqlite/sqlite.go
+index 5d66dd3a9ddb3e4840a22a5f0e8bd0bb1dda961e..48131119da064f59a21af6f744e73fbb81117e2e 100644
+--- a/internal/storage/sqlite/sqlite.go
++++ b/internal/storage/sqlite/sqlite.go
+@@ -316,7 +316,8 @@ func (s *Storage) Values(ctx context.Context, field string, q driver.Query, size
+ 	}
+ 	defer rows.Close()
+ 
+-	terms := make([]string, 0, size)
++	// The requested limit need not reflect the number of matching values.
++	terms := make([]string, 0, min(size, driver.DefaultBatchSize))
+ 	for rows.Next() {
+ 		var value any
+ 		if err := rows.Scan(&value); err != nil {

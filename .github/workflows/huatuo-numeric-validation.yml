@@ -1,4 +1,4 @@
-name: HUATUO SQLite values allocation validation
+name: HUATUO SQLite result allocation validation
 on:
   push:
     branches: [ci/huatuo-values-allocation]
@@ -16,7 +16,7 @@ jobs:
         with:
           go-version: '1.24.3'
           cache: false
-      - name: Prepare exact upstream source and regression
+      - name: Prepare exact upstream and combined regressions
         run: |
           set -euo pipefail
           git init huatuo
@@ -24,69 +24,63 @@ jobs:
           git -C huatuo fetch --depth=1 origin 07e184e7bf1af789e2b6aaf74b253acfb4ba6c46
           git -C huatuo checkout --detach FETCH_HEAD
           test "$(git -C huatuo rev-parse HEAD)" = 07e184e7bf1af789e2b6aaf74b253acfb4ba6c46
-          git -C huatuo apply ../.ci/huatuo-values-regression.patch
+          git -C huatuo apply ../.ci/huatuo-query-regression.patch
           go version
           uname -a
-      - name: Reproduce without modifying production source
+      - name: Reproduce against original production source
         run: |
           set -euo pipefail
           cd huatuo
           set +e
-          GOMAXPROCS=2 go test -p=2 -mod=vendor -json -count=1 ./internal/storage/sqlite -run '^TestSQLiteValuesAllocation$' > ../baseline.jsonl
+          GOMAXPROCS=2 go test -p=2 -mod=vendor -json -count=1 ./internal/storage/sqlite -run '^TestSQLite(Values|Query)Allocation$' > ../query-original.jsonl
           result=$?
           set -e
           test "$result" -eq 1
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          rows = [json.loads(line) for line in Path('../baseline.jsonl').read_text().splitlines()]
-          cases = {r['Test'].split('/')[-1]: r['Action'] for r in rows if '/' in r.get('Test', '') and r['Action'] in ('pass', 'fail', 'skip')}
-          failures = {'empty_with_maximum_limit', 'sparse_with_maximum_limit', 'filtered_with_maximum_limit', 'grows_with_actual_results', 'ignores_record_pagination'}
-          assert len(cases) == 8, cases
-          assert {case for case, status in cases.items() if status == 'fail'} == failures, cases
-          assert sum(status == 'pass' for status in cases.values()) == 3, cases
-          assert not any(r['Action'] in ('build-fail', 'skip') for r in rows), rows
-          output = ''.join(r.get('Output', '') for r in rows)
-          assert output.count('panicked: runtime error: makeslice: cap out of range') == 5, output
-          print('Original production source: five capacity panics; three controls pass.')
-          PY
-      - name: Benchmark original allocation
+          cd ..
+          python3 .ci/huatuo-result-verify.py query-original.jsonl original
+      - name: Benchmark original query allocation
         working-directory: huatuo
         run: |
           set -euo pipefail
-          GOMAXPROCS=2 go test -p=2 -mod=vendor -run '^$' -bench '^BenchmarkSQLiteValuesSparseLimit$' -benchmem -benchtime=5x -count=3 ./internal/storage/sqlite | tee ../benchmark-original.txt
-      - name: Apply the exact fix and run all SQLite tests
+          GOMAXPROCS=2 go test -p=2 -mod=vendor -run '^$' -bench '^BenchmarkSQLiteQueryAllocation$' -benchmem -benchtime=5x -count=3 ./internal/storage/sqlite | tee ../query-benchmark-original.txt
+      - name: Verify the previously published Values-only implementation
         run: |
           set -euo pipefail
-          git -C huatuo apply ../.ci/huatuo-values-fix.patch
+          git -C huatuo apply ../.ci/huatuo-query-parent.patch
           cd huatuo
-          GOMAXPROCS=2 go test -p=2 -mod=vendor -json -count=1 ./internal/storage/sqlite > ../fixed.jsonl
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          rows = [json.loads(line) for line in Path('../fixed.jsonl').read_text().splitlines()]
-          assert not any(r['Action'] in ('fail', 'build-fail', 'skip') for r in rows), rows
-          cases = [r for r in rows if r.get('Test', '').startswith('TestSQLiteValuesAllocation/') and r['Action'] == 'pass']
-          assert len(cases) == 8, cases
-          print('Fixed SQLite package: all cases pass; no failures/build errors/skips.')
-          print('Passed test events:', sum(r['Action'] == 'pass' and 'Test' in r for r in rows))
-          PY
+          test "$(git hash-object internal/storage/sqlite/sqlite.go)" = 48131119da064f59a21af6f744e73fbb81117e2e
+          set +e
+          GOMAXPROCS=2 go test -p=2 -mod=vendor -json -count=1 ./internal/storage/sqlite -run '^TestSQLite(Values|Query)Allocation$' > ../query-published.jsonl
+          result=$?
+          set -e
+          test "$result" -eq 1
+          cd ..
+          python3 .ci/huatuo-result-verify.py query-published.jsonl published
+      - name: Apply complete fix and test the entire SQLite package
+        run: |
+          set -euo pipefail
+          git -C huatuo restore internal/storage/sqlite/sqlite.go
+          git -C huatuo apply ../.ci/huatuo-query-fix.patch
+          cd huatuo
+          GOMAXPROCS=2 go test -p=2 -mod=vendor -json -count=1 ./internal/storage/sqlite > ../query-fixed.jsonl
+          cd ..
+          python3 .ci/huatuo-result-verify.py query-fixed.jsonl fixed
+          cd huatuo
           GOMAXPROCS=2 go test -p=2 -mod=vendor -race -count=1 ./internal/storage/sqlite
           GOMAXPROCS=2 go vet -p=2 -mod=vendor ./internal/storage/sqlite
           git diff --check
-      - name: Benchmark fixed allocation
+      - name: Benchmark fixed query allocation
         working-directory: huatuo
         run: |
           set -euo pipefail
-          GOMAXPROCS=2 go test -p=2 -mod=vendor -run '^$' -bench '^BenchmarkSQLiteValuesSparseLimit$' -benchmem -benchtime=5x -count=3 ./internal/storage/sqlite | tee ../benchmark-fixed.txt
+          GOMAXPROCS=2 go test -p=2 -mod=vendor -run '^$' -bench '^BenchmarkSQLiteQueryAllocation$' -benchmem -benchtime=5x -count=3 ./internal/storage/sqlite | tee ../query-benchmark-fixed.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: sqlite-values-proof
+          name: sqlite-result-allocation-proof
           path: |
-            baseline.jsonl
-            fixed.jsonl
-            benchmark-*.txt
+            query-*.jsonl
+            query-benchmark-*.txt
   repository-check:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -94,23 +88,23 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Prepare exact source and proposed fix
+      - name: Prepare exact source and complete fix
         run: |
           set -euo pipefail
           git init huatuo
           git -C huatuo remote add origin https://github.com/ccfos/huatuo.git
           git -C huatuo fetch --depth=1 origin 07e184e7bf1af789e2b6aaf74b253acfb4ba6c46
           git -C huatuo checkout --detach FETCH_HEAD
-          git -C huatuo apply ../.ci/huatuo-values-regression.patch
-          git -C huatuo apply ../.ci/huatuo-values-fix.patch
-          git -C huatuo add internal/storage/sqlite/sqlite.go internal/storage/sqlite/values_allocation_test.go
+          git -C huatuo apply ../.ci/huatuo-query-regression.patch
+          git -C huatuo apply ../.ci/huatuo-query-fix.patch
+          git -C huatuo add internal/storage/sqlite/sqlite.go internal/storage/sqlite/values_allocation_test.go internal/storage/sqlite/query_allocation_test.go
       - name: Build the repository development toolchain
         working-directory: huatuo
-        run: docker build --target devel --progress plain -t huatuo-values-check -f Dockerfile.devel .
+        run: docker build --target devel --progress plain -t huatuo-query-check -f Dockerfile.devel .
       - name: Run the required repository build and check
         working-directory: huatuo
         run: |
-          docker run --rm -v "$PWD:/workspace" -w /workspace huatuo-values-check sh -ec '
+          docker run --rm -v "$PWD:/workspace" -w /workspace huatuo-query-check sh -ec '
             git config --global --add safe.directory /workspace
             make build
             make check
