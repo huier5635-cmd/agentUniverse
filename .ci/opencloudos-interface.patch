@@ -1,0 +1,121 @@
+diff --git a/fs/proc/stat.c b/fs/proc/stat.c
+--- a/fs/proc/stat.c
++++ b/fs/proc/stat.c
+@@ -10,6 +10,7 @@
+ #include <linux/seq_file.h>
+ #include <linux/slab.h>
+ #include <linux/time.h>
++#include <linux/timekeeping.h>
+ #include <linux/time_namespace.h>
+ #include <linux/irqnr.h>
+ #include <linux/sched/cputime.h>
+@@ -248,6 +249,43 @@
+ 	.proc_release	= single_release,
+ };
+ 
++#ifdef CONFIG_NO_HZ_FULL
++static int show_stat_no_full_hz(struct seq_file *p, void *v)
++{
++	struct timespec64 uptime;
++	int ret;
++
++	ret = show_stat(p, v);
++	if (ret)
++		return ret;
++
++	/* Match CPU accounting across suspend and in time namespaces. */
++	ktime_get_ts64(&uptime);
++	timens_add_monotonic(&uptime);
++	seq_put_decimal_ull(p, "uptime ",
++			    nsec_to_clock_t(timespec64_to_ns(&uptime)));
++	seq_putc(p, '\n');
++	return 0;
++}
++
++static int stat_no_full_hz_open(struct inode *inode, struct file *file)
++{
++	unsigned int size = 1024 + 128 * num_online_cpus();
++	static bool show_scx;
++
++	size += 2 * nr_irqs + 32;
++	return single_open_size(file, show_stat_no_full_hz, &show_scx, size);
++}
++
++static const struct proc_ops stat_no_full_hz_proc_ops = {
++	.proc_flags	= PROC_ENTRY_PERMANENT,
++	.proc_open	= stat_no_full_hz_open,
++	.proc_read_iter	= seq_read_iter,
++	.proc_lseek	= seq_lseek,
++	.proc_release	= single_release,
++};
++#endif
++
+ #ifdef CONFIG_SCHED_CLASS_EXT
+ 
+ static int scx_stat_open(struct inode *inode, struct file *file)
+@@ -307,6 +345,10 @@
+ {
+ 	proc_create("stat", 0, NULL, &stat_proc_ops);
+ 
++#ifdef CONFIG_NO_HZ_FULL
++	proc_create("stat_no_full_hz", 0, NULL, &stat_no_full_hz_proc_ops);
++#endif
++
+ #if defined(CONFIG_EXT_GROUP_SCHED)
+ 	proc_create("scx_stat", 0, NULL, &scx_stat_proc_ops);
+ #endif
+diff --git a/Documentation/ABI/testing/procfs-stat-no-full-hz b/Documentation/ABI/testing/procfs-stat-no-full-hz
+new file mode 100644
+--- /dev/null
++++ b/Documentation/ABI/testing/procfs-stat-no-full-hz
+@@ -0,0 +1,50 @@
++What:           /proc/stat_no_full_hz
++Date:           October 2026
++KernelVersion:  6.6
++Contact:        https://gitee.com/OpenCloudOS/OpenCloudOS-Kernel/issues/IDL1UN
++Description:
++                Available with CONFIG_NO_HZ_FULL. This read-only file reports
++                the same records, CPU fields and units as /proc/stat, followed
++                by one additional record:
++
++                    uptime <ticks>
++
++                ticks is CLOCK_MONOTONIC expressed in USER_HZ clock ticks,
++                including the reader's time-namespace monotonic offset. It
++                excludes time spent suspended, as CPU accounting does. This
++                differs from the suspend-inclusive CLOCK_BOOTTIME reported
++                by /proc/uptime. The new field supplies an elapsed-time
++                denominator alongside the CPU counters in one file read.
++
++                The CPU counters retain their existing accounting semantics;
++                they are not rescaled or replaced. /proc/stat, /proc/scx_stat
++                and /proc/bt_stat are unchanged. Reading this file does not
++                enable forced context tracking or add accounting hooks to
++                context switches.
++
++                For a CPU that remains online throughout an interval, let U
++                be the difference between two uptime values and I be the
++                difference between that CPU's idle values. With tickless idle
++                accounting, the non-idle fraction is (U - I) / U. Using the
++                sum of tick-sampled CPU counters as the denominator can be
++                biased by periodic workloads aligned with the sampling tick.
++
++                To divide the non-idle fraction between execution categories,
++                use the relative changes in the corresponding CPU counters.
++                For example, if B is the sum of the user, nice, system, irq,
++                softirq, iowait and steal changes, the system fraction is
++                ((U - I) / U) * (system_change / B). Guest and guest_nice are
++                already included in user and nice; do not count them twice.
++                Iowait and steal keep the meaning they have in /proc/stat.
++
++                Readers must reject intervals with U <= 0, CPU hotplug or
++                decreasing counters, and handle B == 0 without dividing by
++                zero. Counter collection is not an atomic system snapshot;
++                bound computed fractions to the range [0, 1]. For a stable
++                group of N online CPUs, use N * U as the elapsed CPU capacity
++                when interpreting the aggregate cpu record. CPUs must remain
++                online for the entire measurement interval.
++
++                Values have USER_HZ granularity. Intervals should be long
++                enough that truncation to clock ticks is insignificant.
++Users:          CPU-usage monitoring tools on tickless systems

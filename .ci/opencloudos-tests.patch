@@ -1,0 +1,222 @@
+diff --git a/tools/testing/selftests/proc/Makefile b/tools/testing/selftests/proc/Makefile
+--- a/tools/testing/selftests/proc/Makefile
++++ b/tools/testing/selftests/proc/Makefile
+@@ -15,6 +15,7 @@
+ TEST_GEN_PROGS += proc-self-syscall
+ TEST_GEN_PROGS += proc-self-wchan
+ TEST_GEN_PROGS += proc-subset-pid
++TEST_GEN_PROGS += proc-stat-no-full-hz
+ TEST_GEN_PROGS += proc-tid0
+ TEST_GEN_PROGS += proc-uptime-001
+ TEST_GEN_PROGS += proc-uptime-002
+diff --git a/tools/testing/selftests/proc/config b/tools/testing/selftests/proc/config
+--- a/tools/testing/selftests/proc/config
++++ b/tools/testing/selftests/proc/config
+@@ -1 +1,5 @@
+ CONFIG_PROC_FS=y
++CONFIG_SMP=y
++CONFIG_NO_HZ_FULL=y
++CONFIG_NAMESPACES=y
++CONFIG_TIME_NS=y
+diff --git a/tools/testing/selftests/proc/proc-stat-no-full-hz.c b/tools/testing/selftests/proc/proc-stat-no-full-hz.c
+new file mode 100644
+--- /dev/null
++++ b/tools/testing/selftests/proc/proc-stat-no-full-hz.c
+@@ -0,0 +1,197 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* Validate the elapsed-time denominator and the existing CPU record format. */
++#include <ctype.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <stdbool.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sched.h>
++#include <sys/wait.h>
++#include <time.h>
++#include <unistd.h>
++
++#include "../kselftest.h"
++
++#define STAT_PATH "/proc/stat_no_full_hz"
++
++struct sample {
++	uint64_t uptime;
++	unsigned int cpu_records;
++	bool have_uptime;
++};
++
++static long user_hz;
++
++static uint64_t clock_ticks(void)
++{
++	struct timespec now;
++
++	if (clock_gettime(CLOCK_MONOTONIC, &now))
++		ksft_exit_fail_msg("clock_gettime: %s\n", strerror(errno));
++	return (uint64_t)now.tv_sec * user_hz +
++		(uint64_t)now.tv_nsec * user_hz / 1000000000;
++}
++
++static bool read_sample(const char *path, struct sample *sample)
++{
++	char *line = NULL, *p, *end;
++	size_t size = 0;
++	unsigned int i;
++	FILE *file;
++	bool valid = true;
++
++	memset(sample, 0, sizeof(*sample));
++	file = fopen(path, "r");
++	if (!file)
++		return false;
++	while (getline(&line, &size, file) >= 0) {
++		if (!strncmp(line, "uptime ", 7)) {
++			if (sample->have_uptime) {
++				valid = false;
++				break;
++			}
++			p = line + 7;
++			sample->have_uptime = true;
++			errno = 0;
++			sample->uptime = strtoull(p, &end, 10);
++			if (errno || p == end || *p == '-') {
++				valid = false;
++				break;
++			}
++			while (isspace((unsigned char)*end))
++				end++;
++			if (*end) {
++				valid = false;
++				break;
++			}
++			continue;
++		}
++		if (strncmp(line, "cpu", 3) ||
++		    (!isspace((unsigned char)line[3]) &&
++		     !isdigit((unsigned char)line[3])))
++			continue;
++		p = line + 3;
++		while (isdigit((unsigned char)*p))
++			p++;
++		for (i = 0; i < 10; i++) {
++			while (isspace((unsigned char)*p))
++				p++;
++			errno = 0;
++			strtoull(p, &end, 10);
++			if (errno || p == end || *p == '-') {
++				valid = false;
++				break;
++			}
++			p = end;
++		}
++		while (isspace((unsigned char)*p))
++			p++;
++		if (!valid || *p) {
++			valid = false;
++			break;
++		}
++		sample->cpu_records++;
++	}
++	valid = valid && !ferror(file);
++	free(line);
++	fclose(file);
++	return valid;
++}
++
++static bool clock_bounds(void)
++{
++	struct sample sample;
++	uint64_t before, after;
++
++	before = clock_ticks();
++	if (!read_sample(STAT_PATH, &sample) || !sample.have_uptime)
++		return false;
++	after = clock_ticks();
++	return before <= sample.uptime && sample.uptime <= after;
++}
++
++static int namespace_child(void)
++{
++	const char offset[] = "monotonic 123 0\n";
++	int fd, status;
++	pid_t child;
++
++	if (unshare(CLONE_NEWTIME))
++		return errno == EPERM || errno == EINVAL ? KSFT_SKIP : 1;
++	fd = open("/proc/self/timens_offsets", O_WRONLY);
++	if (fd < 0)
++		return errno == EACCES || errno == ENOENT ? KSFT_SKIP : 1;
++	if (write(fd, offset, sizeof(offset) - 1) != (ssize_t)sizeof(offset) - 1) {
++		close(fd);
++		return 1;
++	}
++	close(fd);
++	/* A new time namespace takes effect in children, not in its creator. */
++	child = fork();
++	if (child < 0)
++		return 1;
++	if (!child)
++		_exit(clock_bounds() ? 0 : 1);
++	if (waitpid(child, &status, 0) != child || !WIFEXITED(status))
++		return 1;
++	return WEXITSTATUS(status);
++}
++
++int main(void)
++{
++	struct sample original = {}, first = {}, next = {};
++	struct timespec pause = { .tv_nsec = 100000000 };
++	uint64_t previous;
++	bool valid = true;
++	int status, result, i;
++	pid_t child;
++
++	ksft_print_header();
++	if (access(STAT_PATH, F_OK)) {
++		if (errno == ENOENT)
++			ksft_exit_skip("CONFIG_NO_HZ_FULL interface is unavailable\n");
++		ksft_exit_fail_msg("access: %s\n", strerror(errno));
++	}
++	user_hz = sysconf(_SC_CLK_TCK);
++	if (user_hz <= 0)
++		ksft_exit_fail_msg("invalid USER_HZ\n");
++	ksft_set_plan(4);
++	valid = read_sample("/proc/stat", &original) &&
++		read_sample(STAT_PATH, &first) && first.have_uptime &&
++		!original.have_uptime && first.cpu_records >= 2 &&
++		original.cpu_records == first.cpu_records;
++	ksft_test_result(valid, "preserve /proc/stat CPU fields and add uptime\n");
++	previous = first.uptime;
++	valid = true;
++	for (i = 0; i < 64; i++) {
++		if (!clock_bounds() || !read_sample(STAT_PATH, &next) ||
++		    !next.have_uptime || next.uptime < previous) {
++			valid = false;
++			break;
++		}
++		previous = next.uptime;
++	}
++	ksft_test_result(valid, "match monotonic clock bounds over repeated reads\n");
++	while (nanosleep(&pause, &pause) && errno == EINTR)
++		;
++	valid = read_sample(STAT_PATH, &next) && next.have_uptime &&
++		next.uptime > previous;
++	ksft_test_result(valid, "uptime advances while the reader sleeps\n");
++	child = fork();
++	if (child < 0)
++		ksft_exit_fail_msg("fork: %s\n", strerror(errno));
++	if (!child)
++		_exit(namespace_child());
++	if (waitpid(child, &status, 0) != child || !WIFEXITED(status))
++		result = 1;
++	else
++		result = WEXITSTATUS(status);
++	if (result == KSFT_SKIP)
++		ksft_test_result_skip("time namespaces require kernel support and privilege\n");
++	else
++		ksft_test_result(result == 0, "apply the reader's time-namespace offset\n");
++	ksft_finished();
++}
