@@ -15,7 +15,7 @@ diff --git a/tools/testing/selftests/proc/config b/tools/testing/selftests/proc/
 @@ -1 +1,5 @@
  CONFIG_PROC_FS=y
 +CONFIG_SMP=y
-+CONFIG_NO_HZ_FULL=y
++CONFIG_NO_HZ_IDLE=y
 +CONFIG_NAMESPACES=y
 +CONFIG_TIME_NS=y
 diff --git a/tools/testing/selftests/proc/proc-stat-no-full-hz.c b/tools/testing/selftests/proc/proc-stat-no-full-hz.c
