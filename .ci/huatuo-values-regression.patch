@@ -2,7 +2,7 @@ diff --git a/internal/storage/sqlite/values_allocation_test.go b/internal/storag
 new file mode 100644
 --- /dev/null
 +++ b/internal/storage/sqlite/values_allocation_test.go
-@@ -0,0 +1,140 @@
+@@ -0,0 +1,142 @@
 +// Copyright 2026 The HuaTuo Authors
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -73,7 +73,7 @@ new file mode 100644
 +		growingNames[index] = name
 +	}
 +
-+	for _, test := range []struct {
++	tests := []struct {
 +		name   string
 +		fields []map[string]any
 +		query  driver.Query
@@ -102,7 +102,9 @@ new file mode 100644
 +		{name: "honors_small_limit", fields: sparse, size: 2, want: []string{"", "alpha"}},
 +		{name: "ordinary_limit", fields: sparse, size: 100, want: []string{"", "alpha", "beta"}},
 +		{name: "empty_ordinary_limit", size: 100, want: []string{}},
-+	} {
++	}
++	for index := range tests {
++		test := &tests[index]
 +		t.Run(test.name, func(t *testing.T) {
 +			backend := newValuesAllocationBackend(t, test.fields)
 +			defer func() {
