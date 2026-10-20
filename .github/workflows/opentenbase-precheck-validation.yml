@@ -1,0 +1,18 @@
+name: OpenTenBase executable root validation
+on:
+  push:
+    branches: [ci/opentenbase-precheck-paths]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install the existing logger dependency in a temporary directory
+        run: python3 -m pip install --target "$RUNNER_TEMP/precheck-deps" loguru==0.7.3
+      - name: Compare official and fixed source with unit and real Linux discovery
+        run: PYTHONPATH="$RUNNER_TEMP/precheck-deps" python3 .ci/opentenbase-precheck/validate.py
