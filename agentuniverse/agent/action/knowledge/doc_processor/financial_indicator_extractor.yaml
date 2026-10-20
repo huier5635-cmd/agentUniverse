@@ -2,6 +2,8 @@ name: 'financial_indicator_extractor'
 description: 'Extract financial indicators from reports including metrics, temporal context, and comparisons'
 extract_temporal: true
 extract_comparisons: true
+# Applies to monetary metrics only. Percentages retain percentage points with
+# unit "%"; debt ratios use unit "ratio". Both have currency "" and scale "units".
 currency_normalization: true
 use_llm: false
 skip_on_error: true

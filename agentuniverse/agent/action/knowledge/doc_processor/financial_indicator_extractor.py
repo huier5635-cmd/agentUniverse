@@ -28,7 +28,7 @@ class FinancialMetric:
     Attributes:
         name: Metric name (e.g., 'revenue', 'profit').
         value: Numeric value.
-        unit: Unit of measurement (e.g., 'USD', 'million').
+        unit: Unit of measurement ('USD', '%', or dimensionless 'ratio').
         time_period: Time period (e.g., 'Q1 2024', 'FY2023').
         context: Surrounding text context.
         position: Position in document.
@@ -73,6 +73,10 @@ class FinancialIndicatorExtractor(DocProcessor):
     2. Temporal context (quarters, fiscal years)
     3. Comparative analysis (YoY, QoQ growth rates)
     4. Currency normalization
+
+    Percentage values retain their percentage points and use unit ``%``;
+    debt ratios use unit ``ratio``. These metrics have an empty currency and
+    scale ``units`` and are excluded from monetary normalization.
 
     Attributes:
         metrics: List of metric names to extract.
@@ -311,10 +315,17 @@ class FinancialIndicatorExtractor(DocProcessor):
                         end = min(len(text), match.end() + 50)
                         context = text[start:end]
 
+                        if full_match.endswith('%'):
+                            measurement_unit = '%'
+                        elif metric_name == 'debt_ratio':
+                            measurement_unit = 'ratio'
+                        else:
+                            measurement_unit = 'USD'
+
                         metric = FinancialMetric(
                             name=metric_name,
                             value=value,
-                            unit='USD',  # Default, will be normalized
+                            unit=measurement_unit,
                             context=context,
                             position=match.start(),
                             raw_match=full_match  # Store original matched text
@@ -528,6 +539,8 @@ class FinancialIndicatorExtractor(DocProcessor):
         }
 
         for metric in metrics:
+            if metric.unit in ('%', 'ratio'):
+                continue
             # Check context for currency indicators
             if '¥' in metric.context or '元' in metric.context or 'CNY' in metric.context:
                 metric.value *= exchange_rates.get('CNY', 1.0)
@@ -571,14 +584,16 @@ class FinancialIndicatorExtractor(DocProcessor):
             if metric.name not in financial_metrics:
                 financial_metrics[metric.name] = []
 
+            nonmonetary = metric.unit in ('%', 'ratio')
             financial_metrics[metric.name].append({
                 'value': metric.value,
                 'unit': metric.unit,
                 'time_period': metric.time_period,
                 'confidence': metric.confidence,
                 'context': metric.context[:100] if len(metric.context) > 100 else metric.context,
-                'currency': self._detect_currency(metric.raw_match if metric.raw_match else metric.context),
-                'scale': self._detect_scale(metric.context),
+                'currency': '' if nonmonetary else self._detect_currency(
+                    metric.raw_match if metric.raw_match else metric.context),
+                'scale': 'units' if nonmonetary else self._detect_scale(metric.context),
             })
 
         metadata['financial_metrics'] = financial_metrics
