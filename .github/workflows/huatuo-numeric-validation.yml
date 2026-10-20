@@ -1,43 +1,128 @@
-name: OpenCloudOS kernel validation feasibility
+name: OpenCloudOS per-CPU elapsed-time validation
 on:
   push:
-    branches: [ci/opencloudos-stat-no-full-hz]
+    branches: [ci/opencloudos-stat-validation-ui]
   workflow_dispatch:
 permissions: {}
 jobs:
-  feasibility:
+  kernel-validation:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 60
     env:
       GIT_TERMINAL_PROMPT: '0'
     steps:
-      - name: Inspect build and virtualization support
-        run: |
-          set -euo pipefail
-          uname -m
-          getconf _NPROCESSORS_ONLN
-          df -Pk .
-          for build_tool in gcc make flex bison bc ld objcopy cpio; do
-            command -v "$build_tool" || true
-          done
-          if test -c /dev/kvm; then
-            echo KVM_DEVICE_PRESENT=yes
-            ls -l /dev/kvm
-          else
-            echo KVM_DEVICE_PRESENT=no
-            exit 1
-          fi
-      - name: Verify real KVM initialization
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install native kernel and guest tools
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends qemu-system-x86
-          printf 'info kvm\nquit\n' | sudo qemu-system-x86_64 \
-            -machine q35,accel=kvm -cpu host -smp 2 -m 256 \
-            -nodefaults -display none -serial none -monitor stdio -S
-      - name: Resolve actual OpenCloudOS target branch
+          sudo apt-get install -y --no-install-recommends \
+            build-essential flex bison bc libssl-dev libelf-dev cpio \
+            qemu-system-x86 busybox-static
+          test -c /dev/kvm
+      - name: Fetch exact official source and build test executables
         run: |
           set -euo pipefail
-          timeout 90s git ls-remote --exit-code --heads \
-            https://gitee.com/OpenCloudOS/OpenCloudOS-Kernel.git \
-            refs/heads/linux-6.6/devel
+          git init kernel
+          git -C kernel remote add origin https://gitee.com/OpenCloudOS/OpenCloudOS-Kernel.git
+          git -C kernel fetch --depth=1 origin 939a4b38cdc93f511d5f3ef9cab464e351473f6a
+          git -C kernel checkout --detach FETCH_HEAD
+          test "$(git -C kernel rev-parse HEAD)" = 939a4b38cdc93f511d5f3ef9cab464e351473f6a
+          test "$(git -C kernel hash-object fs/proc/stat.c)" = 3c81dcd84ddb5d034d5acc38ecafd6210a5f684d
+          git -C kernel apply --check ../.ci/opencloudos-tests.patch
+          git -C kernel apply ../.ci/opencloudos-tests.patch
+          gcc -static -O2 -Wall -Wextra -Werror \
+            .ci/opencloudos-stat-benchmark.c -o stat-benchmark -lrt
+          gcc -static -O2 -Wall -Wextra -Werror -D_GNU_SOURCE \
+            kernel/tools/testing/selftests/proc/proc-stat-no-full-hz.c \
+            -o stat-selftest
+          cat .ci/opencloudos-tests.patch .ci/opencloudos-interface.patch > combined.patch
+          kernel/scripts/checkpatch.pl --no-tree --strict --no-signoff combined.patch
+      - name: Configure and compile the actual unmodified kernel
+        run: |
+          set -euo pipefail
+          ock_build="$PWD/ock-build"
+          make -C kernel O="$ock_build" x86_64_defconfig
+          kernel/scripts/config --file "$ock_build/.config" \
+            --enable SMP --set-val NR_CPUS 8 --enable NO_HZ_FULL \
+            --disable CONTEXT_TRACKING_USER_FORCE \
+            --disable HZ_250 --enable HZ_1000 --set-val HZ 1000 \
+            --enable NAMESPACES --enable TIME_NS --enable POSIX_TIMERS \
+            --enable BLK_DEV_INITRD --enable DEVTMPFS --enable PROC_FS \
+            --enable SYSFS --enable TMPFS \
+            --enable SERIAL_8250 --enable SERIAL_8250_CONSOLE
+          make -C kernel O="$ock_build" olddefconfig
+          grep -E '^(CONFIG_(SMP|NO_HZ_FULL|HZ|HZ_1000|NAMESPACES|TIME_NS|POSIX_TIMERS)=|# CONFIG_CONTEXT_TRACKING_USER_FORCE)' \
+            "$ock_build/.config" | tee kernel-test-config.txt
+          grep -qx 'CONFIG_NO_HZ_FULL=y' "$ock_build/.config"
+          grep -qx 'CONFIG_TIME_NS=y' "$ock_build/.config"
+          grep -qx 'CONFIG_HZ=1000' "$ock_build/.config"
+          grep -qx '# CONFIG_CONTEXT_TRACKING_USER_FORCE is not set' "$ock_build/.config"
+          make -C kernel O="$ock_build" -j"$(nproc)" bzImage
+          cp "$ock_build/arch/x86/boot/bzImage" original-bzImage
+      - name: Prepare a minimal real guest filesystem
+        run: |
+          set -euo pipefail
+          mkdir -p guest/bin guest/proc guest/sys guest/dev
+          cp "$(command -v busybox)" guest/bin/busybox
+          for applet in sh mkdir mount cat uname poweroff; do
+            ln -s busybox "guest/bin/$applet"
+          done
+          install -m 0755 .ci/opencloudos-guest-init.sh guest/init
+          install -m 0755 stat-selftest guest/stat-selftest
+          install -m 0755 stat-benchmark guest/stat-benchmark
+          (cd guest && find . -print0 | cpio --null -o --format=newc) | gzip -n > guest.cpio.gz
+      - name: Boot original source and record sampling behaviour
+        run: |
+          set -euo pipefail
+          sudo timeout 180s qemu-system-x86_64 \
+            -machine q35,accel=kvm -cpu host -smp 2 -m 1024 \
+            -nodefaults -display none -serial stdio -monitor none -no-reboot \
+            -kernel original-bzImage -initrd guest.cpio.gz \
+            -append 'console=ttyS0 rdinit=/init panic=1 nohz_full=1 rcu_nocbs=1 oc_profile=original' \
+            | tee original-guest.log
+          grep -q 'OC_SELFTEST_EXIT=4' original-guest.log
+          grep -q 'OC_GUEST_DONE profile=original' original-guest.log
+      - name: Apply the complete interface and check the patch
+        run: |
+          set -euo pipefail
+          git -C kernel apply --check ../.ci/opencloudos-interface.patch
+          git -C kernel apply ../.ci/opencloudos-interface.patch
+          git -C kernel diff --check
+      - name: Compile and boot the changed actual kernel
+        run: |
+          set -euo pipefail
+          make -C kernel O="$PWD/ock-build" -j"$(nproc)" bzImage
+          cp ock-build/arch/x86/boot/bzImage fixed-bzImage
+          sudo timeout 180s qemu-system-x86_64 \
+            -machine q35,accel=kvm -cpu host -smp 2 -m 1024 \
+            -nodefaults -display none -serial stdio -monitor none -no-reboot \
+            -kernel fixed-bzImage -initrd guest.cpio.gz \
+            -append 'console=ttyS0 rdinit=/init panic=1 nohz_full=1 rcu_nocbs=1 oc_profile=fixed' \
+            | tee fixed-guest.log
+          grep -q 'OC_SELFTEST_EXIT=0' fixed-guest.log
+          grep -q 'OC_GUEST_DONE profile=fixed' fixed-guest.log
+          if grep -Eq 'not ok|# SKIP|Kernel panic' fixed-guest.log; then exit 1; fi
+      - name: Compile the NO_HZ_FULL-disabled configuration
+        run: |
+          set -euo pipefail
+          make -C kernel O="$PWD/ock-build-disabled" x86_64_defconfig
+          kernel/scripts/config --file "$PWD/ock-build-disabled/.config" \
+            --disable NO_HZ_FULL --enable NO_HZ_IDLE
+          make -C kernel O="$PWD/ock-build-disabled" olddefconfig
+          make -C kernel O="$PWD/ock-build-disabled" -j"$(nproc)" fs/proc/stat.o
+          strings ock-build-disabled/fs/proc/stat.o > nohz-disabled-strings.txt
+          if grep -q 'stat_no_full_hz' nohz-disabled-strings.txt; then exit 1; fi
+      - name: Preserve actual validation data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencloudos-stat-validation
+          if-no-files-found: warn
+          path: |
+            *-guest.log
+            kernel-test-config.txt
+            nohz-disabled-strings.txt
+            combined.patch
