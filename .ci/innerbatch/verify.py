@@ -35,16 +35,24 @@ def apply(name):
  subprocess.run(['git','apply','--whitespace=error',str(here/name)],cwd=source,check=True)
 assert run('original-reactor-build',['-pl','broker','-am','-DskipTests','install'])==0
 apply('tests.patch')
-common=run('baseline-common',['-pl','common','-Dtest=MessageDecoderTest','test'])
+common=run('baseline-common',['-pl','common','-Dtest=MessageDecoderTest#testCountInnerMsgNumRejectsZeroLength','test'])
 common_reports=reports('baseline-common-reports','common')
 assert common!=0
 zero=next(x for x in common_reports if x['name']=='testCountInnerMsgNumRejectsZeroLength')
 assert zero['failed'] and ('timed out' in (zero['error'] or '') or 'TestTimedOutException' in (zero['errorType'] or ''))
-broker=run('baseline-broker',['-pl','broker','-Dtest=SendMessageProcessorTest','test'])
+broker=run('baseline-broker',['-pl','broker','-Dtest=SendMessageProcessorTest#testInnerBatchRejectsZeroLength','test'])
 broker_reports=reports('baseline-broker-reports','broker')
 assert broker!=0
 zero=next(x for x in broker_reports if x['name']=='testInnerBatchRejectsZeroLength')
 assert zero['failed'] and ('timed out' in (zero['error'] or '') or 'TestTimedOutException' in (zero['errorType'] or ''))
+assert run('baseline-valid-common',['-pl','common',
+    '-Dtest=MessageDecoderTest#testCountInnerMsgNumPreservesEncodedBatchAndBufferRange','test'])==0
+valid_common=reports('baseline-valid-common-reports','common')
+assert len(valid_common)==1 and all(not x['failed'] and not x['skipped'] for x in valid_common)
+assert run('baseline-valid-broker',['-pl','broker',
+    '-Dtest=SendMessageProcessorTest#testInnerBatchKeepsValidCountAndStoragePath','test'])==0
+valid_broker=reports('baseline-valid-broker-reports','broker')
+assert len(valid_broker)==1 and all(not x['failed'] and not x['skipped'] for x in valid_broker)
 subprocess.run(['git','reset','--hard',manifest['base']],cwd=source,check=True,capture_output=True)
 apply('complete.patch')
 for relative,expected in manifest['fixed'].items():
@@ -63,7 +71,7 @@ for relative,expected in manifest['fixed'].items():
  assert hashlib.sha256((source/relative).read_bytes()).hexdigest()==expected['sha256']
 summary={'base':manifest['base'],'baselineCommonFailures':[x['name'] for x in common_reports if x['failed']],
          'baselineBrokerFailures':[x['name'] for x in broker_reports if x['failed']],
-         'fixedRelatedTests':len(fixed_common)+len(fixed_broker),'fixedRelatedSkipped':0,
+         'baselineValidControlsPassed':len(valid_common)+len(valid_broker),'fixedRelatedTests':len(fixed_common)+len(fixed_broker),'fixedRelatedSkipped':0,
          'fixedFullCommonTests':len(all_common),'fixedFullCommonSkipped':sum(x['skipped'] for x in all_common),
          'fixedSourceHashes':manifest['fixed'],
          'scope':'Original reactor build/install; original zero-length timeouts in real common and broker code; fixed complete two related classes and full common suite, Maven default checkstyle. Not a full broker test suite or live broker deployment.'}

@@ -36,4 +36,4 @@ jobs:
         with:
           name: rocketmq-innerbatch-evidence
           path: .ci/innerbatch/evidence
-          retention-days: 5
+          retention-days: 30

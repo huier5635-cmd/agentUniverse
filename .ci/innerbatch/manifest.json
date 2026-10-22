@@ -32,8 +32,8 @@
       "blob": "0c99e5af49e3942437223a45c776366c24c825da"
     },
     "broker/src/test/java/org/apache/rocketmq/broker/processor/SendMessageProcessorTest.java": {
-      "sha256": "d6a3a4a974524d0d97aa9d27979bf4a006194a6b2d8871eef645c5f249e9d4a6",
-      "blob": "fb77fb2fbee2eb88815b84f0f30bcf7cf622003e"
+      "sha256": "51824febd314189f04d28ea2037b5e84fce75451194ff18b3f192eef92830daa",
+      "blob": "ff4b39c45fa27fd00291f4163aea19afa0aec03e"
     }
   }
 }

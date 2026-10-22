@@ -163,7 +163,7 @@
  
  @RunWith(MockitoJUnitRunner.class)
  public class SendMessageProcessorTest {
-@@ -447,4 +455,59 @@
+@@ -447,4 +455,63 @@
              return true;
          });
      }
@@ -188,8 +188,12 @@
 +            new PutMessageResult(PutMessageStatus.PUT_OK, new AppendMessageResult(AppendMessageStatus.PUT_OK)));
 +        byte[] encoded = MessageDecoder.encodeMessages(Arrays.asList(
 +            new Message(topic, new byte[0]), new Message(topic, new byte[] {1, 2, 3})));
-+        RemotingCommand response = sendMessageProcessor.processRequest(handlerContext, createInnerBatchRequest(encoded));
-+        assertThat(response.getCode()).isEqualTo(ResponseCode.SUCCESS);
++        RemotingCommand request = createInnerBatchRequest(encoded);
++        assertThat(sendMessageProcessor.processRequest(handlerContext, request)).isNull();
++        ArgumentCaptor<RemotingCommand> response = ArgumentCaptor.forClass(RemotingCommand.class);
++        verify(channel).writeAndFlush(response.capture());
++        assertThat(response.getValue().getCode()).isEqualTo(ResponseCode.SUCCESS);
++        assertThat(response.getValue().getOpaque()).isEqualTo(request.getOpaque());
 +        ArgumentCaptor<MessageExtBrokerInner> captured = ArgumentCaptor.forClass(MessageExtBrokerInner.class);
 +        verify(messageStore).putMessage(captured.capture());
 +        assertThat(captured.getValue().getProperty(MessageConst.PROPERTY_INNER_NUM)).isEqualTo("2");
