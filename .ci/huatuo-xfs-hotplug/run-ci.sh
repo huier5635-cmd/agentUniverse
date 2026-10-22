@@ -34,7 +34,7 @@ test "$baseline_focused" -eq 1
 python3 /evidence/verify-ci.py /logs baseline
 go test -mod=vendor -run '^$' -bench '^BenchmarkXFSUpdate$' -benchtime=200ms -count=3 -benchmem ./core/metrics > /logs/baseline-benchmark.log 2>&1
 
-image=$(mktemp /tmp/huatuo-xfs-hotplug.XXXXXX.img)
+image=$(mktemp /tmp/huatuo-xfs-hotplug.XXXXXX)
 device=
 cleanup() {
     if [ -n "$device" ]; then
