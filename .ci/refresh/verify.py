@@ -38,7 +38,7 @@ for n,identity in manifest['candidates'].items():
  def apply(name):
   subprocess.run(['git','apply','--check','--whitespace=error',str(here/name)],cwd=source,check=True)
   subprocess.run(['git','apply','--whitespace=error',str(here/name)],cwd=source,check=True)
- assert run('generation','make gen-build')==0
+ assert run('generation','go mod download capnproto.org/go/capnp/v3; make gen-build')==0
  apply(n+'-tests.patch')
  packages,selection=specs[n]
  focused='go test -mod=vendor -count=1 -json -run '+"'"+selection+"' "+' '.join(packages)
