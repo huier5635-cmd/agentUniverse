@@ -1,0 +1,225 @@
+--- a/common/src/main/java/org/apache/rocketmq/common/message/MessageDecoder.java
++++ b/common/src/main/java/org/apache/rocketmq/common/message/MessageDecoder.java
+@@ -783,10 +783,17 @@
+     public static int countInnerMsgNum(ByteBuffer buffer) {
+         int count = 0;
+         while (buffer.hasRemaining()) {
++            if (buffer.remaining() < Integer.BYTES) {
++                throw new IllegalArgumentException("Truncated inner message size");
++            }
++            int currPos = buffer.position();
++            int size = buffer.getInt(currPos);
++            // The encoded header contains five integers and a properties-length short.
++            if (size < Integer.BYTES * 5 + Short.BYTES || size > buffer.remaining()) {
++                throw new IllegalArgumentException("Invalid inner message size: " + size);
++            }
++            buffer.position(currPos + size);
+             count++;
+-            int currPos = buffer.position();
+-            int size = buffer.getInt();
+-            buffer.position(currPos + size);
+         }
+         return count;
+     }
+--- a/common/src/test/java/org/apache/rocketmq/common/message/MessageDecoderTest.java
++++ b/common/src/test/java/org/apache/rocketmq/common/message/MessageDecoderTest.java
+@@ -25,6 +25,7 @@
+ import java.net.InetSocketAddress;
+ import java.net.UnknownHostException;
+ import java.nio.ByteBuffer;
++import java.util.Arrays;
+ import java.util.Map;
+ 
+ import static org.apache.rocketmq.common.message.MessageDecoder.NAME_VALUE_SEPARATOR;
+@@ -32,6 +33,7 @@
+ import static org.apache.rocketmq.common.message.MessageDecoder.createMessageId;
+ import static org.apache.rocketmq.common.message.MessageDecoder.decodeMessageId;
+ import static org.assertj.core.api.Assertions.assertThat;
++import static org.assertj.core.api.Assertions.assertThatThrownBy;
+ 
+ public class MessageDecoderTest {
+ 
+@@ -428,4 +430,51 @@
+         assertThat(messageId.getAddress()).isEqualTo(msgExt.getStoreHost());
+         assertThat(messageId.getOffset()).isEqualTo(msgExt.getCommitLogOffset());
+     }
+-}
+\ No newline at end of file
++
++    @Test(timeout = 2000, expected = IllegalArgumentException.class)
++    public void testCountInnerMsgNumRejectsZeroLength() {
++        MessageDecoder.countInnerMsgNum(ByteBuffer.allocate(22));
++    }
++
++    @Test(timeout = 3000)
++    public void testCountInnerMsgNumRejectsInvalidBoundaries() {
++        for (int size : new int[] {Integer.MIN_VALUE, -1, 1, 4, 21, 23, Integer.MAX_VALUE}) {
++            ByteBuffer buffer = ByteBuffer.allocate(22);
++            buffer.putInt(0, size);
++            assertThatThrownBy(() -> MessageDecoder.countInnerMsgNum(buffer))
++                .isInstanceOf(IllegalArgumentException.class);
++        }
++        for (int size = 1; size < Integer.BYTES; size++) {
++            ByteBuffer buffer = ByteBuffer.allocate(size);
++            assertThatThrownBy(() -> MessageDecoder.countInnerMsgNum(buffer))
++                .isInstanceOf(IllegalArgumentException.class);
++        }
++    }
++
++    @Test(timeout = 2000, expected = IllegalArgumentException.class)
++    public void testCountInnerMsgNumRejectsInvalidFollowingRecord() {
++        byte[] encoded = MessageDecoder.encodeMessage(new Message("topic", new byte[0]));
++        ByteBuffer buffer = ByteBuffer.allocate(encoded.length + Integer.BYTES);
++        buffer.put(encoded).putInt(0).flip();
++        MessageDecoder.countInnerMsgNum(buffer);
++    }
++
++    @Test
++    public void testCountInnerMsgNumPreservesEncodedBatchAndBufferRange() throws Exception {
++        Message first = new Message("topic", new byte[0]);
++        Message second = new Message("topic", "body".getBytes(MessageDecoder.CHARSET_UTF8));
++        second.putUserProperty("key", "value");
++        byte[] encoded = MessageDecoder.encodeMessages(Arrays.asList(first, second));
++        assertThat(MessageDecoder.decodeMessages(ByteBuffer.wrap(encoded))).hasSize(2);
++        for (ByteBuffer buffer : new ByteBuffer[] {
++            ByteBuffer.allocate(encoded.length + 12), ByteBuffer.allocateDirect(encoded.length + 12)}) {
++            buffer.position(5);
++            buffer.put(encoded);
++            buffer.limit(buffer.position()).position(5);
++            assertThat(MessageDecoder.countInnerMsgNum(buffer.asReadOnlyBuffer())).isEqualTo(2);
++            assertThat(MessageDecoder.countInnerMsgNum(buffer)).isEqualTo(2);
++            assertThat(buffer.hasRemaining()).isFalse();
++        }
++        assertThat(MessageDecoder.countInnerMsgNum(ByteBuffer.allocate(0))).isZero();
++    }
++}
+--- a/broker/src/main/java/org/apache/rocketmq/broker/processor/SendMessageProcessor.java
++++ b/broker/src/main/java/org/apache/rocketmq/broker/processor/SendMessageProcessor.java
+@@ -621,7 +621,17 @@
+             messageExtBatch.setSysFlag(messageExtBatch.getSysFlag() | MessageSysFlag.INNER_BATCH_FLAG);
+             messageExtBatch.setInnerBatch(true);
+ 
+-            int innerNum = MessageDecoder.countInnerMsgNum(ByteBuffer.wrap(messageExtBatch.getBody()));
++            int innerNum;
++            try {
++                innerNum = MessageDecoder.countInnerMsgNum(ByteBuffer.wrap(messageExtBatch.getBody()));
++                if (innerNum == 0) {
++                    throw new IllegalArgumentException("Inner batch is empty");
++                }
++            } catch (IllegalArgumentException e) {
++                response.setCode(ResponseCode.MESSAGE_ILLEGAL);
++                response.setRemark(e.getMessage());
++                return response;
++            }
+ 
+             MessageAccessor.putProperty(messageExtBatch, MessageConst.PROPERTY_INNER_NUM, String.valueOf(innerNum));
+             messageExtBatch.setPropertiesString(MessageDecoder.messageProperties2String(messageExtBatch.getProperties()));
+--- a/broker/src/test/java/org/apache/rocketmq/broker/processor/SendMessageProcessorTest.java
++++ b/broker/src/test/java/org/apache/rocketmq/broker/processor/SendMessageProcessorTest.java
+@@ -19,6 +19,9 @@
+ import io.netty.channel.Channel;
+ import io.netty.channel.ChannelHandlerContext;
+ import java.net.InetSocketAddress;
++import java.nio.ByteBuffer;
++import java.util.Arrays;
++import java.util.Collections;
+ import java.time.Duration;
+ import java.util.ArrayList;
+ import java.util.List;
+@@ -38,10 +41,12 @@
+ import org.apache.rocketmq.broker.transaction.TransactionalMessageService;
+ import org.apache.rocketmq.common.BrokerConfig;
+ import org.apache.rocketmq.common.TopicConfig;
++import org.apache.rocketmq.common.TopicAttributes;
+ import org.apache.rocketmq.common.message.MessageAccessor;
+ import org.apache.rocketmq.common.message.MessageClientIDSetter;
+ import org.apache.rocketmq.common.message.MessageConst;
+ import org.apache.rocketmq.common.message.MessageDecoder;
++import org.apache.rocketmq.common.message.Message;
+ import org.apache.rocketmq.common.message.MessageExt;
+ import org.apache.rocketmq.common.message.MessageExtBrokerInner;
+ import org.apache.rocketmq.common.producer.RecallMessageHandle;
+@@ -55,6 +60,7 @@
+ import org.apache.rocketmq.remoting.protocol.ResponseCode;
+ import org.apache.rocketmq.remoting.protocol.header.ConsumerSendMsgBackRequestHeader;
+ import org.apache.rocketmq.remoting.protocol.header.SendMessageRequestHeader;
++import org.apache.rocketmq.remoting.protocol.header.SendMessageRequestHeaderV2;
+ import org.apache.rocketmq.remoting.protocol.header.SendMessageResponseHeader;
+ import org.apache.rocketmq.store.AppendMessageResult;
+ import org.apache.rocketmq.store.AppendMessageStatus;
+@@ -66,6 +72,7 @@
+ import org.junit.Before;
+ import org.junit.Test;
+ import org.junit.runner.RunWith;
++import org.mockito.ArgumentCaptor;
+ import org.mockito.Mock;
+ import org.mockito.Spy;
+ import org.mockito.junit.MockitoJUnitRunner;
+@@ -78,6 +85,7 @@
+ import static org.mockito.Mockito.when;
+ import static org.mockito.Mockito.verify;
+ import static org.mockito.Mockito.times;
++import static org.mockito.Mockito.never;
+ 
+ @RunWith(MockitoJUnitRunner.class)
+ public class SendMessageProcessorTest {
+@@ -447,4 +455,59 @@
+             return true;
+         });
+     }
++
++    @Test(timeout = 3000)
++    public void testInnerBatchRejectsZeroLength() throws Exception {
++        assertInvalidInnerBatch(new byte[22]);
++    }
++
++    @Test
++    public void testInnerBatchRejectsInvalidBoundaries() throws Exception {
++        assertInvalidInnerBatch(new byte[0]);
++        assertInvalidInnerBatch(new byte[3]);
++        assertInvalidInnerBatch(ByteBuffer.allocate(22).putInt(0, 21).array());
++        assertInvalidInnerBatch(ByteBuffer.allocate(22).putInt(0, Integer.MAX_VALUE).array());
++    }
++
++    @Test
++    public void testInnerBatchKeepsValidCountAndStoragePath() throws Exception {
++        brokerConfig.setAsyncSendEnable(false);
++        when(messageStore.putMessage(any(MessageExtBrokerInner.class))).thenReturn(
++            new PutMessageResult(PutMessageStatus.PUT_OK, new AppendMessageResult(AppendMessageStatus.PUT_OK)));
++        byte[] encoded = MessageDecoder.encodeMessages(Arrays.asList(
++            new Message(topic, new byte[0]), new Message(topic, new byte[] {1, 2, 3})));
++        RemotingCommand response = sendMessageProcessor.processRequest(handlerContext, createInnerBatchRequest(encoded));
++        assertThat(response.getCode()).isEqualTo(ResponseCode.SUCCESS);
++        ArgumentCaptor<MessageExtBrokerInner> captured = ArgumentCaptor.forClass(MessageExtBrokerInner.class);
++        verify(messageStore).putMessage(captured.capture());
++        assertThat(captured.getValue().getProperty(MessageConst.PROPERTY_INNER_NUM)).isEqualTo("2");
++        assertThat(captured.getValue().getBody()).isEqualTo(encoded);
++        assertThat(captured.getValue().getSysFlag() & MessageSysFlag.INNER_BATCH_FLAG).isNotZero();
++    }
++
++    private void assertInvalidInnerBatch(byte[] body) throws Exception {
++        RemotingCommand request = createInnerBatchRequest(body);
++        RemotingCommand response = sendMessageProcessor.processRequest(handlerContext, request);
++        assertThat(response).isNotNull();
++        assertThat(response.getCode()).isEqualTo(ResponseCode.MESSAGE_ILLEGAL);
++        assertThat(response.getOpaque()).isEqualTo(request.getOpaque());
++        verify(messageStore, never()).putMessage(any());
++        verify(messageStore, never()).putMessages(any());
++        verify(messageStore, never()).asyncPutMessage(any());
++        verify(messageStore, never()).asyncPutMessages(any());
++    }
++
++    private RemotingCommand createInnerBatchRequest(byte[] body) {
++        brokerController.getTopicConfigManager().selectTopicConfig(topic).setAttributes(
++            Collections.singletonMap(TopicAttributes.QUEUE_TYPE_ATTRIBUTE.getName(), "BatchCQ"));
++        SendMessageRequestHeader header = createSendMsgRequestHeader();
++        header.setBatch(true);
++        header.setProperties(MessageConst.PROPERTY_UNIQ_CLIENT_MESSAGE_ID_KEYIDX
++            + MessageDecoder.NAME_VALUE_SEPARATOR + "inner-batch" + MessageDecoder.PROPERTY_SEPARATOR);
++        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.SEND_BATCH_MESSAGE,
++            SendMessageRequestHeaderV2.createSendMessageRequestHeaderV2(header));
++        request.setBody(body);
++        request.makeCustomHeaderToNet();
++        return request;
++    }
+ }
