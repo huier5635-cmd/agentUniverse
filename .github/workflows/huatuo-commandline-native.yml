@@ -1,0 +1,47 @@
+name: HUATUO command-line native privileged unit verification
+on:
+  push:
+    branches: [ci/huatuo-commandline-native]
+permissions:
+  contents: read
+jobs:
+  native-unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GOMAXPROCS: '2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.3'
+          cache: false
+      - uses: actions/checkout@v4
+        with:
+          repository: ccfos/huatuo
+          ref: bdcee2d10d872c9c693a87994cf1f63f9b4340dd
+          path: source
+          persist-credentials: false
+      - name: Install native generation dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y clang-15 libbpf-dev capnproto libelf-dev zlib1g-dev libpcap-dev make pkg-config build-essential
+          echo /usr/lib/llvm-15/bin >> "$GITHUB_PATH"
+          go install github.com/vektra/mockery/v2@v2.53.6
+          go install capnproto.org/go/capnp/v3/capnpc-go@v3.1.0-alpha.2
+      - name: Record host environment and compare original with fixed units
+        run: |
+          mkdir -p .ci/commandline/evidence
+          uname -a > .ci/commandline/evidence/environment.txt
+          id >> .ci/commandline/evidence/environment.txt
+          systemctl is-system-running >> .ci/commandline/evidence/environment.txt || true
+          test -S /run/systemd/private
+          python3 .ci/commandline/native.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: huatuo-commandline-native-units
+          path: .ci/commandline/evidence
+          retention-days: 3
