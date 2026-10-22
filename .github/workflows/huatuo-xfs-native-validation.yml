@@ -1,0 +1,75 @@
+name: HUATUO XFS native unit verification
+on:
+  push:
+    branches: [ci/huatuo-xfs-native-verification]
+  workflow_dispatch:
+permissions: {}
+jobs:
+  native-unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GOMAXPROCS: '2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.3'
+          cache: false
+      - name: Fetch exact official HUATUO source
+        run: |
+          git init native-source
+          git -C native-source remote add origin https://github.com/ccfos/huatuo.git
+          git -C native-source -c http.version=HTTP/1.1 fetch --depth=1 origin bdcee2d10d872c9c693a87994cf1f63f9b4340dd
+          git -C native-source checkout --detach FETCH_HEAD
+      - name: Install signed Ubuntu dependencies from the official archive
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          sources=$(mktemp /tmp/huatuo-xfs-apt.XXXXXX.sources)
+          cat > "$sources" <<'SOURCES'
+          Types: deb
+          URIs: https://archive.ubuntu.com/ubuntu/
+          Suites: noble noble-updates noble-backports
+          Components: main restricted universe multiverse
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+          Types: deb
+          URIs: https://security.ubuntu.com/ubuntu/
+          Suites: noble-security
+          Components: main restricted universe multiverse
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          SOURCES
+          options=(-o "Dir::Etc::sourcelist=$sources" -o 'Dir::Etc::sourceparts=-' -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+          sudo apt-get "${options[@]}" update -qq
+          sudo apt-get "${options[@]}" install -y --no-install-recommends clang-15 libbpf-dev capnproto libelf-dev zlib1g-dev libpcap-dev make pkg-config build-essential
+          rm -f "$sources"
+          echo /usr/lib/llvm-15/bin >> "$GITHUB_PATH"
+      - name: Install pinned Go generation tools
+        timeout-minutes: 8
+        run: |
+          go install github.com/vektra/mockery/v2@v2.53.6
+          go install capnproto.org/go/capnp/v3/capnpc-go@v3.1.0-alpha.2
+      - name: Compare complete native baseline and fixed unit suites
+        run: |
+          mkdir -p xfs-native-logs
+          uname -a > xfs-native-logs/environment.txt
+          id >> xfs-native-logs/environment.txt
+          test -S /run/systemd/private
+          python3 .ci/huatuo-xfs-hotplug/run-ci-native.py
+      - name: Show native verification evidence
+        if: always()
+        run: |
+          if test -f xfs-native-logs/verified-native-unit.json; then cat xfs-native-logs/verified-native-unit.json; fi
+          for file in xfs-native-logs/*.log; do
+            echo "Log tail: $file"
+            tail -25 "$file"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: huatuo-xfs-native-units
+          path: xfs-native-logs/
+          retention-days: 30
