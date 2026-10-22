@@ -1,0 +1,354 @@
+--- a/docs/development/storage_en.md
++++ b/docs/development/storage_en.md
+@@ -144,6 +144,12 @@
+ 
+ `Count` counts all matching records. `Values` uses a separate `size`, validated as nonnegative by `storage.Store.Values`. Backends do not repeat pagination or `size` validation for these operations.
+ 
++Elasticsearch/OpenSearch `Values` preserves integer term keys without converting
++them through floating point, including `unsigned_long` values returned by
++OpenSearch. String keys remain literal and floating-point terms retain their
++existing formatting. Values already rounded by the server (for example after
++numeric type promotion across indexes) cannot be recovered by the client.
++
+ ### Backend Differences
+ 
+ - SQLite reads rows using one SELECT with `LIMIT/OFFSET`. The callback holds the sole database connection and must not synchronously access the same backend again.
+--- a/docs/development/storage_zh.md
++++ b/docs/development/storage_zh.md
+@@ -158,6 +158,10 @@
+ 
+ `Count` 统计全部匹配记录；`Values` 使用独立的 `size`，由 `storage.Store.Values` 校验其非负约束。后端不重复校验这两个操作的分页参数或 `size`。
+ 
++Elasticsearch/OpenSearch 的 `Values` 保留整数聚合键，不经过浮点数转换，包括
++OpenSearch 返回的 `unsigned_long` 值。字符串键保持原文，浮点聚合键沿用原有格式。
++若服务端已发生舍入（例如跨索引查询时数值类型提升），客户端无法恢复丢失的精度。
++
+ ### 后端差异
+ 
+ - SQLite 使用一条带 `LIMIT/OFFSET` 的 SELECT 逐行读取。回调期间占用唯一数据库连接，回调不能同步再次访问同一后端。
+--- a/internal/storage/elasticsearch/elasticsearch.go
++++ b/internal/storage/elasticsearch/elasticsearch.go
+@@ -34,7 +34,6 @@
+ 	esdeletebyquery "github.com/elastic/go-elasticsearch/v8/typedapi/core/deletebyquery"
+ 	esget "github.com/elastic/go-elasticsearch/v8/typedapi/core/get"
+ 	esindex "github.com/elastic/go-elasticsearch/v8/typedapi/core/index"
+-	essearch "github.com/elastic/go-elasticsearch/v8/typedapi/core/search"
+ 	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
+ 
+ 	"github.com/ccfos/huatuo/internal/log"
+@@ -408,11 +407,11 @@
+ 		return nil, responseError("terms aggregation", s.index, res)
+ 	}
+ 
+-	var payload essearch.Response
+-	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
++	payload, err := decodeTermsSearchResponse(res.Body)
++	if err != nil {
+ 		return nil, fmt.Errorf("elasticsearch backend terms %s/%s: decode: %w", s.index, field, err)
+ 	}
+-	if err := checkSearchStatus(&payload); err != nil {
++	if err := checkSearchStatus(payload); err != nil {
+ 		return nil, fmt.Errorf("elasticsearch backend terms %s/%s: %w", s.index, field, err)
+ 	}
+ 
+@@ -467,7 +466,11 @@
+ 			if !ok {
+ 				return nil, fmt.Errorf("unexpected terms bucket %d type %T", i, value)
+ 			}
+-			result[i] = driver.StringValue(bucket["key"])
++			term, err := termString(bucket["key"])
++			if err != nil {
++				return nil, fmt.Errorf("terms bucket %d key: %w", i, err)
++			}
++			result[i] = term
+ 		}
+ 		return result, nil
+ 	default:
+--- a/internal/storage/elasticsearch/elasticsearch_test.go
++++ b/internal/storage/elasticsearch/elasticsearch_test.go
+@@ -24,6 +24,7 @@
+ 	"math"
+ 	"net/http"
+ 	"net/http/httptest"
++	"os"
+ 	"slices"
+ 	"sort"
+ 	"strconv"
+@@ -31,6 +32,8 @@
+ 	"sync"
+ 	"testing"
+ 	"time"
++
++	"github.com/elastic/go-elasticsearch/v8/esapi"
+ 
+ 	"github.com/ccfos/huatuo/internal/storage/driver"
+ 	"github.com/ccfos/huatuo/internal/timeutil"
+@@ -1590,3 +1593,141 @@
+ 	}
+ 	return records, nil
+ }
++
++func TestStorageTermsIntegerPrecision(t *testing.T) {
++	tests := []struct {
++		name    string
++		agg     string
++		buckets string
++		want    []string
++	}{
++		{
++			name: "unsigned adjacent beyond exact float integers", agg: "ulterms#terms",
++			buckets: `[{"key":9007199254740992,"doc_count":1},{"key":9007199254740993,"doc_count":1}]`,
++			want:    []string{"9007199254740992", "9007199254740993"},
++		},
++		{
++			name: "unsigned maximum adjacent", agg: "ulterms#terms",
++			buckets: `[{"key":18446744073709551614,"doc_count":1},{"key":18446744073709551615,"doc_count":1}]`,
++			want:    []string{"18446744073709551614", "18446744073709551615"},
++		},
++		{
++			name: "untyped signed extremes", agg: "terms",
++			buckets: `[{"key":-9223372036854775808,"doc_count":1},{"key":9223372036854775807,"doc_count":1}]`,
++			want:    []string{"-9223372036854775808", "9223372036854775807"},
++		},
++		{
++			name: "untyped unsigned maximum", agg: "terms",
++			buckets: `[{"key":18446744073709551615,"doc_count":1}]`,
++			want:    []string{"18446744073709551615"},
++		},
++		{
++			name: "typed signed integers", agg: "lterms#terms",
++			buckets: `[{"key":9007199254740993,"doc_count":1},{"key":9223372036854775807,"doc_count":1}]`,
++			want:    []string{"9007199254740993", "9223372036854775807"},
++		},
++		{
++			name: "literal strings", agg: "sterms#terms",
++			buckets: `[{"key":"001","doc_count":1},{"key":"1.0","doc_count":1}]`,
++			want:    []string{"001", "1.0"},
++		},
++		{
++			name: "typed floating values", agg: "dterms#terms",
++			buckets: `[{"key":1.50,"doc_count":1},{"key":1e3,"doc_count":1}]`,
++			want:    []string{"1.5", "1000"},
++		},
++		{
++			name: "unmapped empty terms", agg: "umterms#terms", buckets: `[]`, want: []string{},
++		},
++		{
++			name: "small integer terms", agg: "terms",
++			buckets: `[{"key":0,"doc_count":1},{"key":1,"doc_count":1},{"key":42,"doc_count":1}]`,
++			want:    []string{"0", "1", "42"},
++		},
++		{
++			name: "untyped floating values", agg: "terms",
++			buckets: `[{"key":0.25,"doc_count":1},{"key":1e3,"doc_count":1},{"key":1.0,"doc_count":1}]`,
++			want:    []string{"0.25", "1000", "1"},
++		},
++	}
++	for _, test := range tests {
++		t.Run(test.name, func(t *testing.T) {
++			body := fmt.Sprintf(`{"timed_out":false,"_shards":{"total":1,"successful":1,"failed":0},"aggregations":{%q:{"buckets":%s}}}`, test.agg, test.buckets)
++			backend := newResponseBackend(t, http.StatusOK, body)
++			values, err := backend.Values(t.Context(), "counter", driver.Query{}, 10)
++			if err != nil {
++				t.Fatal(err)
++			}
++			if !slices.Equal(values, test.want) {
++				t.Fatalf("Values() = %q, want %q", values, test.want)
++			}
++		})
++	}
++}
++
++func TestStorageTermsMalformedTypedValues(t *testing.T) {
++	for _, kind := range []string{"lterms", "dterms"} {
++		t.Run(kind, func(t *testing.T) {
++			body := fmt.Sprintf(`{"timed_out":false,"_shards":{"total":1,"successful":1,"failed":0},"aggregations":{"%s#terms":{"buckets":[{"key":"not-a-number","doc_count":1}]}}}`, kind)
++			backend := newResponseBackend(t, http.StatusOK, body)
++			if _, err := backend.Values(t.Context(), "counter", driver.Query{}, 10); err == nil {
++				t.Fatal("Values() accepted a malformed numeric term key")
++			}
++		})
++	}
++}
++
++func TestStorageTermsLiveOpenSearch(t *testing.T) {
++	address := os.Getenv("HUATUO_TERMS_TEST_OPENSEARCH_URL")
++	if address == "" {
++		t.Skip("set HUATUO_TERMS_TEST_OPENSEARCH_URL to run the OpenSearch integration")
++	}
++	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
++	defer cancel()
++	index := "huatuo-terms-precision-" + strconv.FormatInt(time.Now().UnixNano(), 10)
++	backend, err := NewBackend(&Config{Addresses: []string{address}, Index: index})
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() {
++		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
++		defer cleanupCancel()
++		if err := backend.Close(cleanupCtx); err != nil {
++			t.Errorf("close backend: %v", err)
++		}
++		res, err := (esapi.IndicesDeleteRequest{Index: []string{index}}).Do(cleanupCtx, backend.transport)
++		if err != nil {
++			t.Errorf("delete integration index: %v", err)
++			return
++		}
++		defer res.Body.Close()
++		if res.IsError() && res.StatusCode != http.StatusNotFound {
++			t.Errorf("delete integration index: status %d", res.StatusCode)
++		}
++	})
++	res, err := (esapi.IndicesCreateRequest{
++		Index: index,
++		Body:  strings.NewReader(`{"mappings":{"properties":{"counter":{"type":"unsigned_long"}}}}`),
++	}).Do(ctx, backend.transport)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer res.Body.Close()
++	if res.IsError() {
++		t.Fatal(responseError("create integration index", index, res))
++	}
++	want := []string{"9007199254740992", "9007199254740993", "18446744073709551614", "18446744073709551615"}
++	for i, key := range want {
++		record := driver.Record{ID: strconv.Itoa(i), Data: []byte(`{"counter":` + key + `}`)}
++		if err := backend.Save(ctx, record, driver.SaveOptions{WaitForVisibility: true}); err != nil {
++			t.Fatal(err)
++		}
++	}
++	values, err := backend.Values(ctx, "counter", driver.Query{}, 10)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !slices.Equal(values, want) {
++		t.Fatalf("OpenSearch Values() = %q, want %q", values, want)
++	}
++}
+--- /dev/null
++++ b/internal/storage/elasticsearch/terms.go
+@@ -0,0 +1,124 @@
++// Copyright 2026 The HuaTuo Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++// http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package elasticsearch
++
++import (
++	"encoding/json"
++	"fmt"
++	"io"
++	"strings"
++
++	essearch "github.com/elastic/go-elasticsearch/v8/typedapi/core/search"
++	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
++
++	"github.com/ccfos/huatuo/internal/storage/driver"
++)
++
++func decodeTermsSearchResponse(body io.Reader) (*essearch.Response, error) {
++	// The SDK's root decoder creates its own decoder, rounding numeric keys
++	// in fallback aggregations even when the caller enables UseNumber.
++	type responseWithoutDecoder essearch.Response
++	var payload responseWithoutDecoder
++	decoder := json.NewDecoder(body)
++	decoder.UseNumber()
++	if err := decoder.Decode(&payload); err != nil {
++		return nil, err
++	}
++	response := (*essearch.Response)(&payload)
++	if _, ok := response.Aggregations["terms"]; !ok {
++		for name, aggregation := range response.Aggregations {
++			if kind, key, typed := strings.Cut(name, "#"); typed && key == "terms" {
++				decoded, err := decodeKnownTerms(kind, aggregation)
++				if err != nil {
++					return nil, err
++				}
++				response.Aggregations["terms"] = decoded
++				break
++			}
++		}
++	}
++	return response, nil
++}
++
++func decodeKnownTerms(kind string, aggregation types.Aggregate) (types.Aggregate, error) {
++	var decoded types.Aggregate
++	switch kind {
++	case "sterms":
++		decoded = &types.StringTermsAggregate{}
++	case "lterms":
++		if err := quoteLongTermKeys(aggregation); err != nil {
++			return nil, err
++		}
++		decoded = &types.LongTermsAggregate{}
++	case "dterms":
++		decoded = &types.DoubleTermsAggregate{}
++	case "umterms":
++		decoded = &types.UnmappedTermsAggregate{}
++	default:
++		if fields, ok := aggregation.(map[string]any); ok {
++			if _, hasBuckets := fields["buckets"]; !hasBuckets {
++				return nil, fmt.Errorf("unexpected terms aggregation type %q", kind)
++			}
++		}
++		return aggregation, nil
++	}
++	// Keep SDK validation/formatting after normalizing long keys. Generic
++	// fallback aggregations retain json.Number for unsigned integer keys.
++	data, err := json.Marshal(aggregation)
++	if err != nil {
++		return nil, err
++	}
++	if err := json.Unmarshal(data, decoded); err != nil {
++		return nil, err
++	}
++	return decoded, nil
++}
++
++func quoteLongTermKeys(aggregation types.Aggregate) error {
++	fields, ok := aggregation.(map[string]any)
++	if !ok {
++		return nil
++	}
++	buckets, _ := fields["buckets"].([]any)
++	for _, value := range buckets {
++		bucket, ok := value.(map[string]any)
++		if !ok {
++			continue
++		}
++		if number, ok := bucket["key"].(json.Number); ok {
++			if _, err := number.Int64(); err != nil {
++				return fmt.Errorf("invalid signed integer term key %q: %w", number, err)
++			}
++			// The SDK parses numeric long keys through float64, but its string
++			// path uses ParseInt and retains the complete signed integer.
++			bucket["key"] = number.String()
++		}
++	}
++	return nil
++}
++
++func termString(value any) (string, error) {
++	number, ok := value.(json.Number)
++	if !ok || !strings.ContainsAny(number.String(), ".eE") {
++		return driver.StringValue(value), nil
++	}
++	// Retain the existing formatting of floating-point terms without routing
++	// integer identifiers through float64.
++	floating, err := number.Float64()
++	if err != nil {
++		return "", err
++	}
++	return driver.StringValue(floating), nil
++}
