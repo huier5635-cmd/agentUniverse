@@ -1,0 +1,11 @@
+{
+  "base": "bdcee2d10d872c9c693a87994cf1f63f9b4340dd",
+  "baseline": {
+    "internal/process/process.go": "018e4f5bafe9862718e3cf4437f86908257c4321",
+    "internal/process/process_test.go": "db333c010604f596c20c6e7c632d4a2c746e24f3"
+  },
+  "fixed": {
+    "internal/process/process.go": "b494a35ec9829697046281d35df24420f0b435e2a714ce6443593c7916ba91b1",
+    "internal/process/process_test.go": "556e84b2f662aac946b9cee6f7eb14f1affe7a08b044f87e7b001ae76ce5d496"
+  }
+}
