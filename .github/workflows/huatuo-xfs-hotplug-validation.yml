@@ -1,0 +1,52 @@
+name: HUATUO XFS device lifecycle validation
+on:
+  push:
+    branches: [ci/huatuo-xfs-hotplug-validation]
+  workflow_dispatch:
+permissions: {}
+jobs:
+  xfs-lifecycle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Fetch exact official HUATUO source
+        run: |
+          set -euo pipefail
+          git init huatuo
+          git -C huatuo remote add origin https://github.com/ccfos/huatuo.git
+          git -C huatuo -c http.version=HTTP/1.1 fetch --depth=1 origin bdcee2d10d872c9c693a87994cf1f63f9b4340dd
+          git -C huatuo checkout --detach FETCH_HEAD
+          test "$(git -C huatuo rev-parse HEAD)" = bdcee2d10d872c9c693a87994cf1f63f9b4340dd
+          mkdir -p xfs-logs
+      - name: Build the repository development image
+        run: docker build --target devel --progress plain -t huatuo-xfs-validation -f huatuo/Dockerfile.devel huatuo
+      - name: Record development image
+        run: docker image inspect huatuo-xfs-validation > xfs-logs/image.json
+      - name: Reproduce, fix, benchmark and run repository checks
+        run: |
+          docker run --rm --privileged \
+            -v /dev:/dev \
+            -v "$PWD/huatuo:/workspace" \
+            -v "$PWD/.ci/huatuo-xfs-hotplug:/evidence:ro" \
+            -v "$PWD/xfs-logs:/logs" \
+            -w /workspace huatuo-xfs-validation sh /evidence/run-ci.sh
+      - name: Show terminal evidence
+        if: always()
+        run: |
+          find xfs-logs -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
+          for file in xfs-logs/verified-results.json xfs-logs/cleanup.txt; do
+            if test -f "$file"; then cat "$file"; fi
+          done
+          for file in xfs-logs/*.log; do
+            echo "Log tail: $file"
+            tail -30 "$file"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: huatuo-xfs-hotplug-evidence
+          path: xfs-logs/
+          retention-days: 30
