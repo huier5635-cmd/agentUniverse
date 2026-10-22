@@ -72,8 +72,11 @@
 +}
 --- a/broker/src/test/java/org/apache/rocketmq/broker/processor/SendMessageProcessorTest.java
 +++ b/broker/src/test/java/org/apache/rocketmq/broker/processor/SendMessageProcessorTest.java
-@@ -19,6 +19,9 @@
+@@ -17,8 +17,12 @@
+ package org.apache.rocketmq.broker.processor;
+ 
  import io.netty.channel.Channel;
++import io.netty.channel.ChannelFuture;
  import io.netty.channel.ChannelHandlerContext;
  import java.net.InetSocketAddress;
 +import java.nio.ByteBuffer;
@@ -82,7 +85,7 @@
  import java.time.Duration;
  import java.util.ArrayList;
  import java.util.List;
-@@ -38,10 +41,12 @@
+@@ -38,10 +42,12 @@
  import org.apache.rocketmq.broker.transaction.TransactionalMessageService;
  import org.apache.rocketmq.common.BrokerConfig;
  import org.apache.rocketmq.common.TopicConfig;
@@ -95,7 +98,7 @@
  import org.apache.rocketmq.common.message.MessageExt;
  import org.apache.rocketmq.common.message.MessageExtBrokerInner;
  import org.apache.rocketmq.common.producer.RecallMessageHandle;
-@@ -55,6 +60,7 @@
+@@ -55,6 +61,7 @@
  import org.apache.rocketmq.remoting.protocol.ResponseCode;
  import org.apache.rocketmq.remoting.protocol.header.ConsumerSendMsgBackRequestHeader;
  import org.apache.rocketmq.remoting.protocol.header.SendMessageRequestHeader;
@@ -103,7 +106,7 @@
  import org.apache.rocketmq.remoting.protocol.header.SendMessageResponseHeader;
  import org.apache.rocketmq.store.AppendMessageResult;
  import org.apache.rocketmq.store.AppendMessageStatus;
-@@ -66,6 +72,7 @@
+@@ -66,6 +73,7 @@
  import org.junit.Before;
  import org.junit.Test;
  import org.junit.runner.RunWith;
@@ -111,7 +114,11 @@
  import org.mockito.Mock;
  import org.mockito.Spy;
  import org.mockito.junit.MockitoJUnitRunner;
-@@ -78,6 +85,7 @@
+@@ -75,9 +83,11 @@
+ import static org.mockito.ArgumentMatchers.any;
+ import static org.mockito.ArgumentMatchers.anyLong;
+ import static org.mockito.Mockito.doAnswer;
++import static org.mockito.Mockito.mock;
  import static org.mockito.Mockito.when;
  import static org.mockito.Mockito.verify;
  import static org.mockito.Mockito.times;
@@ -119,7 +126,7 @@
  
  @RunWith(MockitoJUnitRunner.class)
  public class SendMessageProcessorTest {
-@@ -447,4 +455,63 @@
+@@ -447,4 +457,65 @@
              return true;
          });
      }
@@ -140,16 +147,18 @@
 +    @Test
 +    public void testInnerBatchKeepsValidCountAndStoragePath() throws Exception {
 +        brokerConfig.setAsyncSendEnable(false);
++        when(channel.writeAndFlush(any())).thenReturn(mock(ChannelFuture.class));
 +        when(messageStore.putMessage(any(MessageExtBrokerInner.class))).thenReturn(
 +            new PutMessageResult(PutMessageStatus.PUT_OK, new AppendMessageResult(AppendMessageStatus.PUT_OK)));
 +        byte[] encoded = MessageDecoder.encodeMessages(Arrays.asList(
 +            new Message(topic, new byte[0]), new Message(topic, new byte[] {1, 2, 3})));
 +        RemotingCommand request = createInnerBatchRequest(encoded);
-+        assertThat(sendMessageProcessor.processRequest(handlerContext, request)).isNull();
++        RemotingCommand returnedResponse = sendMessageProcessor.processRequest(handlerContext, request);
 +        ArgumentCaptor<RemotingCommand> response = ArgumentCaptor.forClass(RemotingCommand.class);
 +        verify(channel).writeAndFlush(response.capture());
 +        assertThat(response.getValue().getCode()).isEqualTo(ResponseCode.SUCCESS);
 +        assertThat(response.getValue().getOpaque()).isEqualTo(request.getOpaque());
++        assertThat(returnedResponse).isSameAs(response.getValue());
 +        ArgumentCaptor<MessageExtBrokerInner> captured = ArgumentCaptor.forClass(MessageExtBrokerInner.class);
 +        verify(messageStore).putMessage(captured.capture());
 +        assertThat(captured.getValue().getProperty(MessageConst.PROPERTY_INNER_NUM)).isEqualTo("2");
