@@ -1,0 +1,18 @@
+name: OpenTenBase result path validation
+on:
+  push:
+    branches: [ci/opentenbase-resultcompare-paths]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install existing original-source logger dependency in temporary directory
+        run: python3 -m pip install --target "$RUNNER_TEMP/result-path-deps" loguru==0.7.3
+      - name: Verify original, proposed and related-PR-composed comparisons
+        run: PYTHONPATH="$RUNNER_TEMP/result-path-deps" python3 .ci/result-paths/verify.py

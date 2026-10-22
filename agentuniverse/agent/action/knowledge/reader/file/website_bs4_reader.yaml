@@ -1,6 +1,0 @@
-name: 'default_website_bs4_reader'
-description: 'default website bs4 reader'
-metadata:
-  type: 'READER'
-  module: 'agentuniverse.agent.action.knowledge.reader.file.website_bs4_reader'
-  class: 'WebsiteBs4Reader'

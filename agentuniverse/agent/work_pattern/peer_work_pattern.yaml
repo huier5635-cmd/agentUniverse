@@ -1,6 +1,0 @@
-name: 'peer_work_pattern'
-description: 'peer work pattern'
-metadata:
-  type: 'WORK_PATTERN'
-  module: 'agentuniverse.agent.work_pattern.peer_work_pattern'
-  class: 'PeerWorkPattern'
