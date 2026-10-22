@@ -17,6 +17,7 @@ jobs:
           repository: apache/rocketmq
           ref: 38a7ca0d23a3e2d4339f9a2bf6e78cf541eed9e3
           path: source
+          submodules: recursive
           persist-credentials: false
       - uses: actions/setup-java@v4
         with:
@@ -27,6 +28,7 @@ jobs:
         run: |
           java -version
           mvn -version
+          git -C source submodule status --recursive
       - name: Reproduce original stall and validate actual fixed modules
         run: python3 .ci/innerbatch/verify.py
       - uses: actions/upload-artifact@v4
