@@ -9,7 +9,7 @@
          #[arg(long, default_value = DEFAULT_MOUNT_PATH)]
          mount_path: PathBuf,
  
-@@ -371,6 +371,57 @@
+@@ -371,6 +371,56 @@
      }
  }
  
@@ -19,13 +19,12 @@
 +    socket: PathBuf,
 +    log_level: String,
 +) -> Result<DaemonConfig> {
-+    let file_config = load_config_file(config_path)
-+        .with_context(|| {
-+            format!(
-+                "Failed to load {}; refusing default backend selection",
-+                config_path.display()
-+            )
-+        })?;
++    let file_config = load_config_file(config_path).with_context(|| {
++        format!(
++            "Failed to load {}; refusing default backend selection",
++            config_path.display()
++        )
++    })?;
 +    Ok(DaemonConfig {
 +        mount_path,
 +        socket_path: socket,
@@ -67,7 +66,7 @@
  async fn run(cli: Cli) -> Result<()> {
      match cli.command {
          Commands::Daemon {
-@@ -378,46 +429,9 @@
+@@ -378,46 +428,12 @@
              socket,
              log_level,
          } => {
@@ -81,9 +80,12 @@
 -                    Default::default()
 -                });
 -            let config = DaemonConfig {
--                mount_path,
++            let config = load_daemon_config(
++                std::path::Path::new(CONFIG_FILE_PATH),
+                 mount_path,
 -                socket_path: socket,
--                log_level,
++                socket,
+                 log_level,
 -                auto_cleanup: file_config.auto_cleanup.unwrap_or(DEFAULT_AUTO_CLEANUP),
 -                auto_cleanup_keep: file_config
 -                    .auto_cleanup_keep
@@ -111,23 +113,48 @@
 -                min_free_bytes: 512 * 1024 * 1024,
 -                min_free_percent: 1.0,
 -            };
-+            let config = load_daemon_config(
-+                std::path::Path::new(CONFIG_FILE_PATH), mount_path, socket, log_level,
 +            )?;
              ws_ckpt_daemon::run_daemon(config).await?;
          }
          Commands::Init { workspace } => {
-@@ -2351,6 +2365,32 @@
+@@ -2351,6 +2367,65 @@
  
  #[cfg(test)]
  mod tests {
++    struct ConfigFixture(std::path::PathBuf);
++
++    impl ConfigFixture {
++        fn new() -> Self {
++            let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
++            let root = std::env::temp_dir().join(format!("ws-ckpt-daemon-config-{}-{unique}", std::process::id()));
++            std::fs::create_dir(&root).unwrap();
++            Self(root)
++        }
++    }
++
++    impl Drop for ConfigFixture {
++        fn drop(&mut self) {
++            let _ = std::fs::remove_file(self.0.join("config.toml"));
++            let _ = std::fs::remove_dir(&self.0);
++        }
++    }
++
 +    #[test]
 +    fn daemon_entry_loads_mount_pin_and_preserves_explicit_runtime_arguments() {
-+        let temp = tempfile::tempdir().unwrap();
-+        let path = temp.path().join("config.toml");
++        let temp = ConfigFixture::new();
++        let path = temp.0.join("config.toml");
 +        std::fs::write(&path, "[backend]\ntype = 'btrfs-base'\n[backend.btrfs-base]\nbtrfs_mount = '/mnt/chosen mount'\n[backend.btrfs-loop]\nimg_size = 16\n").unwrap();
-+        let config = super::load_daemon_config(&path, "/loop-override".into(), "/socket-override".into(), "debug".into()).unwrap();
-+        assert_eq!(config.btrfs_mount.as_deref(), Some(std::path::Path::new("/mnt/chosen mount")));
++        let config = super::load_daemon_config(
++            &path,
++            "/loop-override".into(),
++            "/socket-override".into(),
++            "debug".into(),
++        )
++        .unwrap();
++        assert_eq!(
++            config.btrfs_mount.as_deref(),
++            Some(std::path::Path::new("/mnt/chosen mount"))
++        );
 +        assert_eq!(config.backend_type, "btrfs-base");
 +        assert_eq!(config.mount_path, std::path::Path::new("/loop-override"));
 +        assert_eq!(config.socket_path, std::path::Path::new("/socket-override"));
@@ -137,13 +164,19 @@
 +
 +    #[test]
 +    fn daemon_entry_defaults_only_when_config_is_missing() {
-+        let temp = tempfile::tempdir().unwrap();
-+        let path = temp.path().join("config.toml");
-+        let load = || super::load_daemon_config(&path, "/loop".into(), "/socket".into(), "info".into());
++        let temp = ConfigFixture::new();
++        let path = temp.0.join("config.toml");
++        let load =
++            || super::load_daemon_config(&path, "/loop".into(), "/socket".into(), "info".into());
 +        assert!(load().unwrap().btrfs_mount.is_none());
-+        for content in ["invalid = [toml", "[backend.btrfs-base]\nbtrfs_mount = 'relative'\n"] {
++        for content in [
++            "invalid = [toml",
++            "[backend.btrfs-base]\nbtrfs_mount = 'relative'\n",
++        ] {
 +            std::fs::write(&path, content).unwrap();
-+            assert!(format!("{:#}", load().unwrap_err()).contains("refusing default backend selection"));
++            assert!(
++                format!("{:#}", load().unwrap_err()).contains("refusing default backend selection")
++            );
 +        }
 +    }
 +
@@ -194,7 +227,12 @@
          }
      }
  }
-@@ -1306,6 +1320,20 @@
+@@ -1302,10 +1316,24 @@
+     }
+ }
+ 
+-/// Validate numeric ranges in a loaded `FileConfig` so downstream consumers
++/// Validate absolute mount pins and numeric ranges so downstream consumers
  /// (e.g. bootstrap's `f64 -> u64` cast on `avail * img_max_percent / 100.0`)
  /// never see NaN/Infinity/out-of-range values.
  fn validate_file_config(fc: &FileConfig, path: &Path) -> Result<(), WsCkptError> {
@@ -225,7 +263,7 @@
              min_free_bytes: 512 * 1024 * 1024,                // 512 MB
 --- /dev/null
 +++ b/src/ws-ckpt/src/crates/common/tests/btrfs_config.rs
-@@ -0,0 +1,38 @@
+@@ -0,0 +1,65 @@
 +use std::path::Path;
 +
 +use ws_ckpt_common::{load_config_file, save_config_file, FileConfig};
@@ -236,8 +274,20 @@
 +    let path = temp.path().join("config.toml");
 +    std::fs::write(&path, "[backend]\ntype = 'btrfs-base'\n[backend.btrfs-base]\nbtrfs_mount = '/mnt/storage with spaces'\n[backend.btrfs-loop]\nimg_size = 15\nimg_max_percent = 30.0\n").unwrap();
 +    let config = load_config_file(&path).unwrap();
-+    assert_eq!(config.backend.btrfs_base.as_ref().unwrap().btrfs_mount.as_deref(), Some(Path::new("/mnt/storage with spaces")));
-+    assert_eq!(config.backend.btrfs_loop.as_ref().unwrap().img_size, Some(15));
++    assert_eq!(
++        config
++            .backend
++            .btrfs_base
++            .as_ref()
++            .unwrap()
++            .btrfs_mount
++            .as_deref(),
++        Some(Path::new("/mnt/storage with spaces"))
++    );
++    assert_eq!(
++        config.backend.btrfs_loop.as_ref().unwrap().img_size,
++        Some(15)
++    );
 +    save_config_file(&path, &config).unwrap();
 +    assert_eq!(load_config_file(&path).unwrap(), config);
 +}
@@ -247,10 +297,18 @@
 +    let temp = tempfile::tempdir().unwrap();
 +    let path = temp.path().join("config.toml");
 +    assert_eq!(load_config_file(&path).unwrap(), FileConfig::default());
-+    for content in ["", "[backend]\ntype = 'btrfs-loop'\n", "[backend.btrfs-base]\n"] {
++    for content in [
++        "",
++        "[backend]\ntype = 'btrfs-loop'\n",
++        "[backend.btrfs-base]\n",
++    ] {
 +        std::fs::write(&path, content).unwrap();
 +        let config = load_config_file(&path).unwrap();
-+        assert!(config.backend.btrfs_base.and_then(|b| b.btrfs_mount).is_none());
++        assert!(config
++            .backend
++            .btrfs_base
++            .and_then(|b| b.btrfs_mount)
++            .is_none());
 +    }
 +}
 +
@@ -259,9 +317,16 @@
 +    let temp = tempfile::tempdir().unwrap();
 +    let path = temp.path().join("config.toml");
 +    for value in ["", ".", "../storage", "relative", "~/storage"] {
-+        std::fs::write(&path, format!("[backend.btrfs-base]\nbtrfs_mount = '{}'\n", value)).unwrap();
++        std::fs::write(
++            &path,
++            format!("[backend.btrfs-base]\nbtrfs_mount = '{}'\n", value),
++        )
++        .unwrap();
 +        let error = load_config_file(&path).unwrap_err().to_string();
-+        assert!(error.contains("btrfs_mount") && error.contains("absolute"), "{error}");
++        assert!(
++            error.contains("btrfs_mount") && error.contains("absolute"),
++            "{error}"
++        );
 +    }
 +}
 --- a/src/ws-ckpt/src/crates/daemon/src/backend_detect.rs
@@ -277,7 +342,23 @@
  
  use ws_ckpt_common::backend::{BackendType, StorageBackend};
  use ws_ckpt_common::DaemonConfig;
-@@ -40,15 +40,26 @@
+@@ -19,12 +19,9 @@
+ 
+ /// Detect and create the appropriate storage backend based on configuration.
+ ///
+-/// When `config.backend_type` is "auto", runs the three-level auto-detection:
+-///   1. Check if the default data path is already on btrfs → BtrfsBase
+-///   2. Check if any btrfs partition is mounted → BtrfsBase (CrossDisk)
+-///   3. Fallback → BtrfsLoop (creates a loop device)
+-///
+-/// When an explicit backend type is configured, creates that backend directly.
++/// An explicit type selects that backend. On a fresh auto install, a mount pin
++/// selects BtrfsBase; otherwise the first writable physical btrfs mount wins,
++/// with BtrfsLoop as the fallback. Restores use create_backend_from_persisted.
+ pub(crate) async fn detect_and_create_backend(
+     config: &DaemonConfig,
+ ) -> anyhow::Result<DetectResult> {
+@@ -40,15 +37,26 @@
                  method: "config".to_string(),
              })
          }
@@ -312,7 +393,7 @@
              Ok(DetectResult {
                  backend,
                  method: "auto-detect".to_string(),
-@@ -57,31 +68,19 @@
+@@ -57,31 +65,19 @@
      }
  }
  
@@ -353,7 +434,7 @@
  ) -> anyhow::Result<Arc<dyn StorageBackend>> {
      match backend_type {
          BackendType::BtrfsLoop => {
-@@ -102,25 +101,83 @@
+@@ -102,25 +98,104 @@
              Ok(Arc::new(backend))
          }
          BackendType::BtrfsBase => {
@@ -373,9 +454,6 @@
 -            info!(
 -                "Creating BtrfsBase backend: mount={}, scenario={:?}",
 -                mount_info.mount_point, scenario
--            );
--            let backend = BtrfsBaseBackend::new(PathBuf::from(&mount_info.mount_point), scenario);
--            Ok(Arc::new(backend))
 +            let preferred =
 +                btrfs_mount_preference(config.btrfs_mount.as_deref(), persisted_data_root)?;
 +            let mount = match preferred {
@@ -387,9 +465,9 @@
 +                }
 +            };
 +            Ok(create_btrfs_base(config, Path::new(&mount.mount_point)))
-         }
-     }
- }
++        }
++    }
++}
 +
 +fn btrfs_mount_preference(
 +    configured: Option<&Path>,
@@ -431,8 +509,18 @@
 +
 +    #[test]
 +    fn config_pin_overrides_persisted_root_and_absence_allows_first_install_detection() {
-+        assert_eq!(btrfs_mount_preference(Some(Path::new("/chosen")), Some(Path::new("/old/ws-ckpt-data"))).unwrap(), Some(PathBuf::from("/chosen")));
-+        assert_eq!(btrfs_mount_preference(None, Some(Path::new("/old mount/ws-ckpt-data"))).unwrap(), Some(PathBuf::from("/old mount")));
++        assert_eq!(
++            btrfs_mount_preference(
++                Some(Path::new("/chosen")),
++                Some(Path::new("/old/ws-ckpt-data"))
++            )
++            .unwrap(),
++            Some(PathBuf::from("/chosen"))
++        );
++        assert_eq!(
++            btrfs_mount_preference(None, Some(Path::new("/old mount/ws-ckpt-data"))).unwrap(),
++            Some(PathBuf::from("/old mount"))
++        );
 +        assert_eq!(btrfs_mount_preference(None, None).unwrap(), None);
 +    }
 +
@@ -440,7 +528,15 @@
 +    fn invalid_persisted_root_is_not_a_first_install_but_can_be_explicitly_overridden() {
 +        for root in ["relative/ws-ckpt-data", "/old/wrong-data", "/"] {
 +            assert!(btrfs_mount_preference(None, Some(Path::new(root))).is_err());
-+            assert_eq!(btrfs_mount_preference(Some(Path::new("/chosen")), Some(Path::new(root))).unwrap(), Some(PathBuf::from("/chosen")));
++            assert_eq!(
++                btrfs_mount_preference(Some(Path::new("/chosen")), Some(Path::new(root))).unwrap(),
++                Some(PathBuf::from("/chosen"))
+             );
+-            let backend = BtrfsBaseBackend::new(PathBuf::from(&mount_info.mount_point), scenario);
+-            Ok(Arc::new(backend))
+-        }
+-    }
+-}
 +        }
 +    }
 +
@@ -448,9 +544,17 @@
 +    async fn configured_or_persisted_unmounted_root_never_falls_back() {
 +        let temp = tempfile::tempdir().unwrap();
 +        for explicit in [false, true] {
-+            let config = DaemonConfig { btrfs_mount: explicit.then(|| temp.path().to_path_buf()), ..Default::default() };
++            let config = DaemonConfig {
++                btrfs_mount: explicit.then(|| temp.path().to_path_buf()),
++                ..Default::default()
++            };
 +            let root = temp.path().join("ws-ckpt-data");
-+            let result = create_backend_from_persisted(BackendType::BtrfsBase, &config, (!explicit).then_some(root.as_path())).await;
++            let result = create_backend_from_persisted(
++                BackendType::BtrfsBase,
++                &config,
++                (!explicit).then_some(root.as_path()),
++            )
++            .await;
 +            assert!(result.is_err());
 +            assert!(format!("{:#}", result.err().unwrap()).contains("not mounted"));
 +        }
@@ -613,10 +717,21 @@
  }
  
  /// Warmup snapshot metadata cache to speed up subsequent btrfs operations.
-@@ -2335,6 +2407,30 @@
+@@ -2335,6 +2407,69 @@
  mod tests {
      use super::*;
      use std::path::PathBuf;
++
++    #[tokio::test]
++    async fn selected_mount_requires_an_existing_absolute_directory() {
++        let temp = tempfile::tempdir().unwrap();
++        let missing = temp.path().join("missing");
++        assert!(validate_btrfs_mount(&missing).await.unwrap_err().to_string().contains("does not exist"));
++        let file = temp.path().join("file");
++        std::fs::write(&file, b"not a directory").unwrap();
++        assert!(validate_btrfs_mount(&file).await.unwrap_err().to_string().contains("not a directory"));
++        assert!(validate_btrfs_mount(Path::new("relative")).await.unwrap_err().to_string().contains("absolute"));
++    }
 +
 +    #[test]
 +    fn fresh_mount_candidates_are_writable_physical_btrfs_in_kernel_order() {
@@ -629,17 +744,45 @@
 +
 +    #[test]
 +    fn selected_mount_errors_remain_distinct_and_do_not_select_an_alternative() {
-+        let mounts = "/dev/a /valid btrfs rw 0 0\n/dev/b /ext ext4 rw 0 0\n/dev/c /readonly btrfs ro 0 0\n";
-+        for (path, message) in [("/missing", "not mounted"), ("/ext", "not btrfs"), ("/readonly", "read-only"), ("/valid/subdir", "not mounted")] {
-+            assert!(validate_btrfs_mount_in(mounts, Path::new(path)).unwrap_err().to_string().contains(message));
++        let mounts =
++            "/dev/a /valid btrfs rw 0 0\n/dev/b /ext ext4 rw 0 0\n/dev/c /readonly btrfs ro 0 0\n";
++        for (path, message) in [
++            ("/missing", "not mounted"),
++            ("/ext", "not btrfs"),
++            ("/readonly", "read-only"),
++            ("/valid/subdir", "not mounted"),
++        ] {
++            assert!(validate_btrfs_mount_in(mounts, Path::new(path))
++                .unwrap_err()
++                .to_string()
++                .contains(message));
 +        }
-+        assert_eq!(validate_btrfs_mount_in(mounts, Path::new("/valid")).unwrap().device, "/dev/a");
++        assert_eq!(
++            validate_btrfs_mount_in(mounts, Path::new("/valid"))
++                .unwrap()
++                .device,
++            "/dev/a"
++        );
 +    }
 +
 +    #[test]
 +    fn selected_mount_decodes_spaces_and_checks_last_exact_entry() {
-+        assert_eq!(validate_btrfs_mount_in("/dev/a /with\\040spaces btrfs rw 0 0\n", Path::new("/with spaces")).unwrap().mount_point, "/with spaces");
-+        assert!(validate_btrfs_mount_in("/dev/a /mount btrfs rw 0 0\n/dev/b /mount ext4 rw 0 0\n", Path::new("/mount")).unwrap_err().to_string().contains("not btrfs"));
++        assert_eq!(
++            validate_btrfs_mount_in(
++                "/dev/a /with\\040spaces btrfs rw 0 0\n",
++                Path::new("/with spaces")
++            )
++            .unwrap()
++            .mount_point,
++            "/with spaces"
++        );
++        assert!(validate_btrfs_mount_in(
++            "/dev/a /mount btrfs rw 0 0\n/dev/b /mount ext4 rw 0 0\n",
++            Path::new("/mount")
++        )
++        .unwrap_err()
++        .to_string()
++        .contains("not btrfs"));
 +    }
  
      static REAL_BTRFS_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -667,7 +810,7 @@
      // img_* are bootstrap-only: warn if changed but don't mutate cfg
      // (loop image size is fixed until the next restart, where
      // bootstrap reconciles target = min(img_size GiB, total * pct/100)).
-@@ -858,11 +872,33 @@
+@@ -858,11 +872,45 @@
              auto_cleanup_interval_secs: 86_400,
              health_check_interval_secs: 300,
              backend_type: "auto".to_string(),
@@ -684,20 +827,32 @@
 +        let temp = tempfile::tempdir().unwrap();
 +        let mut config = test_config();
 +        config.btrfs_mount = Some(PathBuf::from("/old-mount"));
-+        let state = Arc::new(DaemonState::new(config, test_backend(), temp.path().to_path_buf()));
++        let state = Arc::new(DaemonState::new(
++            config,
++            test_backend(),
++            temp.path().to_path_buf(),
++        ));
 +        let original_root = state.backend.data_root().to_path_buf();
 +        let file = FileConfig {
 +            backend: ws_ckpt_common::BackendConfig {
-+                btrfs_base: Some(ws_ckpt_common::BtrfsBaseConfig { btrfs_mount: Some(PathBuf::from("/new-mount")) }),
++                btrfs_base: Some(ws_ckpt_common::BtrfsBaseConfig {
++                    btrfs_mount: Some(PathBuf::from("/new-mount")),
++                }),
 +                ..Default::default()
 +            },
 +            ..Default::default()
 +        };
 +        apply_global_config(&state, &file);
-+        assert_eq!(state.config_snapshot().btrfs_mount.as_deref(), Some(std::path::Path::new("/old-mount")));
++        assert_eq!(
++            state.config_snapshot().btrfs_mount.as_deref(),
++            Some(std::path::Path::new("/old-mount"))
++        );
 +        assert_eq!(state.backend.data_root(), original_root);
 +        apply_global_config(&state, &FileConfig::default());
-+        assert_eq!(state.config_snapshot().btrfs_mount.as_deref(), Some(std::path::Path::new("/old-mount")));
++        assert_eq!(
++            state.config_snapshot().btrfs_mount.as_deref(),
++            Some(std::path::Path::new("/old-mount"))
++        );
      }
  
      // The dispatcher routes all Request variants to handlers. For handlers that
@@ -713,11 +868,11 @@
              min_free_bytes: 512 * 1024 * 1024,
 --- /dev/null
 +++ b/src/ws-ckpt/src/crates/daemon/src/startup/native_btrfs_config_tests.rs
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,159 @@
 +//! Operator-selected roots and type transitions on explicitly supplied native fixtures.
 +
-+use super::*;
 +use super::native_btrfs_tests::{mount, save_base};
++use super::*;
 +use std::io::Write;
 +use std::sync::Mutex;
 +use tracing::instrument::WithSubscriber;
@@ -732,7 +887,9 @@
 +        Ok(bytes.len())
 +    }
 +
-+    fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
++    fn flush(&mut self) -> std::io::Result<()> {
++        Ok(())
++    }
 +}
 +
 +#[tokio::test]
@@ -741,17 +898,33 @@
 +    let temp = tempfile::tempdir().unwrap();
 +    let output = Capture(Arc::new(Mutex::new(Vec::new())));
 +    let writer = output.clone();
-+    let subscriber = tracing_subscriber::fmt().with_ansi(false).without_time().with_writer(move || writer.clone()).finish();
-+    let state = resolve_state(&DaemonConfig::default(), temp.path()).with_subscriber(subscriber).await.unwrap();
++    let subscriber = tracing_subscriber::fmt()
++        .with_ansi(false)
++        .without_time()
++        .with_writer(move || writer.clone())
++        .finish();
++    let state = resolve_state(&DaemonConfig::default(), temp.path())
++        .with_subscriber(subscriber)
++        .await
++        .unwrap();
 +    let first = mount("WS_CKPT_TEST_FIRST_MOUNT");
 +    assert_eq!(state.backend.data_root(), first.join("ws-ckpt-data"));
 +    let text = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
-+    for expected in ["Multiple writable btrfs", "chosen_device", "chosen_mount_point", "btrfs_mount", first.to_str().unwrap(), mount("WS_CKPT_TEST_PERSISTED_MOUNT").to_str().unwrap()] {
++    for expected in [
++        "Multiple writable btrfs",
++        "chosen_device",
++        "chosen_mount_point",
++        "btrfs_mount",
++        first.to_str().unwrap(),
++        mount("WS_CKPT_TEST_PERSISTED_MOUNT").to_str().unwrap(),
++    ] {
 +        assert!(text.contains(expected), "missing {expected:?}: {text}");
 +    }
 +    state.save_manifest().await.unwrap();
 +    let saved = persist::load_state(temp.path()).unwrap().unwrap();
-+    assert!(matches!(saved.paths, persist::BackendPaths::BtrfsBase { data_root, .. } if data_root == first.join("ws-ckpt-data")));
++    assert!(
++        matches!(saved.paths, persist::BackendPaths::BtrfsBase { data_root, .. } if data_root == first.join("ws-ckpt-data"))
++    );
 +}
 +
 +#[tokio::test]
@@ -761,19 +934,36 @@
 +    let previous = mount("WS_CKPT_TEST_FIRST_MOUNT");
 +    let chosen = mount("WS_CKPT_TEST_PERSISTED_MOUNT");
 +    save_base(temp.path(), &previous);
-+    let config = DaemonConfig { btrfs_mount: Some(chosen.clone()), ..Default::default() };
++    let config = DaemonConfig {
++        btrfs_mount: Some(chosen.clone()),
++        ..Default::default()
++    };
 +    let output = Capture(Arc::new(Mutex::new(Vec::new())));
 +    let writer = output.clone();
-+    let subscriber = tracing_subscriber::fmt().with_ansi(false).without_time().with_writer(move || writer.clone()).finish();
-+    let state = resolve_state(&config, temp.path()).with_subscriber(subscriber).await.unwrap();
++    let subscriber = tracing_subscriber::fmt()
++        .with_ansi(false)
++        .without_time()
++        .with_writer(move || writer.clone())
++        .finish();
++    let state = resolve_state(&config, temp.path())
++        .with_subscriber(subscriber)
++        .await
++        .unwrap();
 +    assert_eq!(state.backend.data_root(), chosen.join("ws-ckpt-data"));
 +    let text = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
-+    for expected in ["Previous snapshots become invisible", "prune unpinned", "does not recover pruned", temp.path().to_str().unwrap()] {
++    for expected in [
++        "Previous snapshots become invisible",
++        "prune unpinned",
++        "does not recover pruned",
++        temp.path().to_str().unwrap(),
++    ] {
 +        assert!(text.contains(expected), "missing {expected:?}: {text}");
 +    }
 +    state.save_manifest().await.unwrap();
 +    drop(state);
-+    let restarted = resolve_state(&DaemonConfig::default(), temp.path()).await.unwrap();
++    let restarted = resolve_state(&DaemonConfig::default(), temp.path())
++        .await
++        .unwrap();
 +    assert_eq!(restarted.backend.data_root(), chosen.join("ws-ckpt-data"));
 +}
 +
@@ -785,12 +975,25 @@
 +    let root = temp.path().join("old-loop-root");
 +    let state_file = persist::DaemonStateFile::new(
 +        persist::DAEMON_STATE_VERSION,
-+        persist::BackendIdentity { backend_type: BackendType::BtrfsLoop, selection_method: "auto-detect".into(), selected_at: chrono::Utc::now() },
-+        persist::BackendPaths::BtrfsLoop { mount_path: root.clone(), data_root: root.clone(), snapshots_root: root.join("snapshots"), loop_img: None },
++        persist::BackendIdentity {
++            backend_type: BackendType::BtrfsLoop,
++            selection_method: "auto-detect".into(),
++            selected_at: chrono::Utc::now(),
++        },
++        persist::BackendPaths::BtrfsLoop {
++            mount_path: root.clone(),
++            data_root: root.clone(),
++            snapshots_root: root.join("snapshots"),
++            loop_img: None,
++        },
 +        Vec::new(),
 +    );
 +    persist::save_state(temp.path(), &state_file).unwrap();
-+    let config = DaemonConfig { backend_type: "btrfs-base".into(), btrfs_mount: Some(chosen.clone()), ..Default::default() };
++    let config = DaemonConfig {
++        backend_type: "btrfs-base".into(),
++        btrfs_mount: Some(chosen.clone()),
++        ..Default::default()
++    };
 +    let state = resolve_state(&config, temp.path()).await.unwrap();
 +    assert_eq!(state.backend.backend_type(), BackendType::BtrfsBase);
 +    assert_eq!(state.backend.data_root(), chosen.join("ws-ckpt-data"));
@@ -800,7 +1003,10 @@
 +#[tokio::test]
 +#[ignore = "requires explicitly provided, isolated writable Btrfs mount fixtures"]
 +async fn selected_readonly_or_non_btrfs_mount_never_falls_back() {
-+    let cases = [("WS_CKPT_TEST_READONLY_MOUNT", "read-only"), ("WS_CKPT_TEST_NON_BTRFS_MOUNT", "not btrfs")];
++    let cases = [
++        ("WS_CKPT_TEST_READONLY_MOUNT", "read-only"),
++        ("WS_CKPT_TEST_NON_BTRFS_MOUNT", "not btrfs"),
++    ];
 +    for (name, diagnostic) in cases {
 +        let temp = tempfile::tempdir().unwrap();
 +        let selected = mount(name);
@@ -808,9 +1014,15 @@
 +            save_base(temp.path(), &selected);
 +            let manifest_path = temp.path().join(ws_ckpt_common::STATE_FILE);
 +            let before = std::fs::read(&manifest_path).unwrap();
-+            let config = DaemonConfig { btrfs_mount: configured.then_some(selected.clone()), ..Default::default() };
++            let config = DaemonConfig {
++                btrfs_mount: configured.then_some(selected.clone()),
++                ..Default::default()
++            };
 +            let result = resolve_state(&config, temp.path()).await;
-+            assert!(result.is_err(), "selected {diagnostic} mount must fail even when another usable mount exists");
++            assert!(
++                result.is_err(),
++                "selected {diagnostic} mount must fail even when another usable mount exists"
++            );
 +            assert!(format!("{:#}", result.err().unwrap()).contains(diagnostic));
 +            assert_eq!(std::fs::read(&manifest_path).unwrap(), before);
 +        }
@@ -818,24 +1030,36 @@
 +}
 --- /dev/null
 +++ b/src/ws-ckpt/src/crates/daemon/src/startup/native_btrfs_tests.rs
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,108 @@
 +//! Native restart regressions; fixtures are supplied by an isolated Linux runner.
 +
 +use super::*;
 +use ws_ckpt_common::backend::BackendType;
-+use ws_ckpt_common::persist::{BackendIdentity, BackendPaths, DaemonStateFile, DAEMON_STATE_VERSION};
++use ws_ckpt_common::persist::{
++    BackendIdentity, BackendPaths, DaemonStateFile, DAEMON_STATE_VERSION,
++};
 +
 +pub(super) fn mount(name: &str) -> std::path::PathBuf {
-+    std::env::var_os(name).map(std::path::PathBuf::from).expect("explicit isolated Btrfs fixture required")
++    std::env::var_os(name)
++        .map(std::path::PathBuf::from)
++        .expect("explicit isolated Btrfs fixture required")
 +}
 +
 +pub(super) fn save_base(state_dir: &Path, mount: &Path) {
 +    let root = mount.join("ws-ckpt-data");
 +    let state = DaemonStateFile::new(
 +        DAEMON_STATE_VERSION,
-+        BackendIdentity { backend_type: BackendType::BtrfsBase, selection_method: "auto-detect".into(), selected_at: chrono::Utc::now() },
++        BackendIdentity {
++            backend_type: BackendType::BtrfsBase,
++            selection_method: "auto-detect".into(),
++            selected_at: chrono::Utc::now(),
++        },
 +        // Legacy manifests store the data root in mount_path too.
-+        BackendPaths::BtrfsBase { mount_path: root.clone(), data_root: root.clone(), snapshots_root: root.join("snapshots") },
++        BackendPaths::BtrfsBase {
++            mount_path: root.clone(),
++            data_root: root.clone(),
++            snapshots_root: root.join("snapshots"),
++        },
 +        Vec::new(),
 +    );
 +    persist::save_state(state_dir, &state).unwrap();
@@ -843,11 +1067,20 @@
 +
 +fn assert_detection_is_other_mount() {
 +    let detected = std::fs::read_to_string("/proc/mounts").unwrap();
-+    let first = detected.lines().find(|line| {
-+        let p: Vec<_> = line.split_whitespace().collect();
-+        p.len() >= 4 && p[2] == "btrfs" && p[0].starts_with("/dev/") && !p[0].starts_with("/dev/loop") && p[3].split(',').any(|o| o == "rw")
-+    }).expect("writable physical fixture mount must be present");
-+    let escaped = mount("WS_CKPT_TEST_FIRST_MOUNT").to_string_lossy().replace(' ', "\\040");
++    let first = detected
++        .lines()
++        .find(|line| {
++            let p: Vec<_> = line.split_whitespace().collect();
++            p.len() >= 4
++                && p[2] == "btrfs"
++                && p[0].starts_with("/dev/")
++                && !p[0].starts_with("/dev/loop")
++                && p[3].split(',').any(|o| o == "rw")
++        })
++        .expect("writable physical fixture mount must be present");
++    let escaped = mount("WS_CKPT_TEST_FIRST_MOUNT")
++        .to_string_lossy()
++        .replace(' ', "\\040");
 +    assert_eq!(first.split_whitespace().nth(1).unwrap(), escaped);
 +}
 +
@@ -858,10 +1091,19 @@
 +    let temp = tempfile::tempdir().unwrap();
 +    let previous = mount("WS_CKPT_TEST_PERSISTED_MOUNT");
 +    save_base(temp.path(), &previous);
-+    let state = resolve_state(&DaemonConfig::default(), temp.path()).await.unwrap();
++    let state = resolve_state(&DaemonConfig::default(), temp.path())
++        .await
++        .unwrap();
 +    assert_eq!(state.backend.data_root(), previous.join("ws-ckpt-data"));
 +    state.save_manifest().await.unwrap();
-+    assert_eq!(persist::load_state(temp.path()).unwrap().unwrap().backend.selection_method, "persisted");
++    assert_eq!(
++        persist::load_state(temp.path())
++            .unwrap()
++            .unwrap()
++            .backend
++            .selection_method,
++        "persisted"
++    );
 +}
 +
 +#[tokio::test]
@@ -875,7 +1117,10 @@
 +    let path = temp.path().join(ws_ckpt_common::STATE_FILE);
 +    let before = std::fs::read(&path).unwrap();
 +    let result = resolve_state(&DaemonConfig::default(), temp.path()).await;
-+    assert!(result.is_err(), "must refuse an unmounted persisted root even with another writable Btrfs mount");
++    assert!(
++        result.is_err(),
++        "must refuse an unmounted persisted root even with another writable Btrfs mount"
++    );
 +    assert!(format!("{:#}", result.err().unwrap()).contains("not mounted"));
 +    assert_eq!(std::fs::read(path).unwrap(), before);
 +}
@@ -888,7 +1133,10 @@
 +    let path = temp.path().join(ws_ckpt_common::STATE_FILE);
 +    std::fs::write(&path, b"{invalid manifest").unwrap();
 +    let result = resolve_state(&DaemonConfig::default(), temp.path()).await;
-+    assert!(result.is_err(), "invalid state must not become a new first install");
++    assert!(
++        result.is_err(),
++        "invalid state must not become a new first install"
++    );
 +    assert_eq!(std::fs::read(path).unwrap(), b"{invalid manifest");
 +}
 --- a/src/ws-ckpt/src/crates/daemon/src/startup.rs
