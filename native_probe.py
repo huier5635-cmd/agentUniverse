@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -66,9 +65,19 @@ async def main():
         assert text(response) == payload, "input was mutated"
         database = Path(temporary) / "stash.db"
         assert database.is_file()
-        with sqlite3.connect(database) as check:
-            healthy_stash_entries = check.execute("SELECT COUNT(*) FROM stash").fetchone()[0]
-        check.close()
+        # Keep every inspection outside the native runtime's process: loading
+        # a second SQLite implementation must not disturb its lock/cache state.
+        healthy_stash_entries = int(subprocess.check_output(
+            [
+                sys.executable,
+                "-c",
+                "import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); "
+                "print(db.execute('SELECT COUNT(*) FROM stash').fetchone()[0]); db.close()",
+                str(database),
+            ],
+            text=True,
+            timeout=15,
+        ))
         assert healthy_stash_entries > 0, "healthy control did not exercise the stash backend"
         # Use a fast backend/migration failure, separately from the pipeline
         # deadline that can affect a long-running writer-lock experiment.
