@@ -4,6 +4,7 @@ on:
     branches: [ci/pr8928-review-20261023]
 permissions:
   contents: read
+  actions: read
 jobs:
   unit:
     runs-on: ubuntu-24.04
@@ -28,43 +29,6 @@ jobs:
         with:
           name: pr8928-review-unit
           path: evidence/
-  wheel:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          path: payload
-      - uses: actions/checkout@v4
-        with:
-          repository: agentic-os-org/ANOLISA
-          ref: 5351c892f2e89d6be799ebdbeea948c173d3d7c2
-          path: upstream
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11.6'
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: upstream/src/tokenless
-      - run: python -m pip install 'maturin>=1.9,<2'
-      - name: Build the native SDK from this revision's Rust source
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p evidence wheels
-          { python --version; rustc --version; cargo --version; maturin --version; git -C upstream rev-parse HEAD; } > evidence/build-environment.txt
-          maturin build --locked --profile python-release --manifest-path upstream/src/tokenless/python/tokenless/Cargo.toml --out wheels -i python > evidence/wheel-build.txt 2>&1
-          sha256sum wheels/*.whl > evidence/wheel-sha256.txt
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: pr8928-review-wheel-build
-          path: evidence/
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pr8928-review-native-wheel
-          path: wheels/*.whl
   integration:
     needs: unit
     runs-on: ubuntu-24.04
@@ -99,7 +63,7 @@ jobs:
           name: pr8928-review-full-integration
           path: evidence/
   native:
-    needs: [unit, wheel]
+    needs: unit
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     strategy:
@@ -122,6 +86,8 @@ jobs:
         with:
           name: pr8928-review-native-wheel
           path: wheels
+          run-id: 39955586560
+          github-token: ${{ github.token }}
       - name: Install the real framework and fresh native SDK
         run: python -m pip install wheels/*.whl 'agentscope==${{ matrix.agentscope }}' 'mcp>=1.13,<2' tqdm greenlet
       - name: Reproduce real SQLite failure, preserve the result, and verify recovery
