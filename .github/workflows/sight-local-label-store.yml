@@ -1,0 +1,70 @@
+name: AgentSight local label-store errors
+on:
+  push:
+    branches: [ci/sight-local-label-store]
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: agentic-os-org/ANOLISA
+          ref: 5351c892f2e89d6be799ebdbeea948c173d3d7c2
+          path: official
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: rustfmt
+      - name: Format the candidate and verify architecture and SQLite boundaries
+        run: python3 .ci/sight-local-label-store/prepare.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sight-local-label-prepared
+          path: prepared/
+          if-no-files-found: error
+  macos:
+    needs: prepare
+    runs-on: macos-14
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: '3'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      RUSTUP_TOOLCHAIN: '1.89.0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: agentic-os-org/ANOLISA
+          ref: 5351c892f2e89d6be799ebdbeea948c173d3d7c2
+          path: official
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: sight-local-label-prepared
+          path: prepared
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: official/src/agentsight
+          shared-key: sight-local-label-macos
+          cache-on-failure: true
+      - name: Verify real local HTTP routes on baseline and candidate
+        run: python3 .ci/sight-local-label-store/verify.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sight-local-label-macos-evidence
+          path: evidence/
+          if-no-files-found: error

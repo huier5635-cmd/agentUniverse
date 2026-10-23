@@ -1,0 +1,8 @@
+{
+  "base": "5351c892f2e89d6be799ebdbeea948c173d3d7c2",
+  "issue": 6721,
+  "sourceFile": "src/agentsight/src/local/server/trajectories.rs",
+  "originalSHA256": "b6041327619057ba30ecbd8a0b144f13b1e0aac906e599ca49fbabbe11f6ddd4",
+  "unformattedSHA256": "4b10901f30a66d84a930058cba480a1632ea904dfe42a0753f38511e26ccd11f",
+  "sourcePublished": false
+}
