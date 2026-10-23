@@ -38,7 +38,7 @@
       "path": "src/tokenless/tests/test-codex-adapter-install.sh",
       "mode": "100755",
       "originalSHA256": "9191cf10d32b5badb60914103a581274b90621c2390504574bd5e0370653462b",
-      "fixedSHA256": "b959f026f10d83c00059e6bed40930b13c8647c16dae1866c7c1339d92c27975"
+      "fixedSHA256": "ba88f85134a52fea5244dc429a2968ccccafc6a8089308d5dcf90bf043264b58"
     }
   ]
 }

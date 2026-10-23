@@ -81,7 +81,7 @@
              break
 --- a/src/tokenless/tests/test-codex-adapter-install.sh
 +++ b/src/tokenless/tests/test-codex-adapter-install.sh
-@@ -306,6 +306,243 @@
+@@ -306,6 +306,249 @@
      fail "uninstall left the marketplace directory or the binary behind"
  fi
  
@@ -176,7 +176,12 @@
 +        selected = result.stdout.rstrip("\n")
 +        canary = ""
 +        if selected:
-+            executable = pathlib.Path(selected)
++            if "/" not in selected:
++                found = shutil.which(selected, path=environment["PATH"])
++                self.assertTrue(found, "selected command must resolve through the fixture PATH")
++                executable = pathlib.Path(found)
++            else:
++                executable = pathlib.Path(selected)
 +            if not executable.is_absolute():
 +                executable = self.cwd / executable
 +            executable = executable.resolve()
@@ -282,7 +287,8 @@
 +        home = str(self.root / "home")
 +        self.seed_home(home)
 +        for value in [None, "relative", home]:
-+            self.assertEqual(self.invoke(value), (str(path_cli), "canary:path:argument with spaces\n"))
++            self.assertEqual(self.invoke(value), ("codex", "canary:path:argument with spaces\n"))
++            self.assertEqual(self.invoke(value, pin="codex"), ("codex", "canary:path:argument with spaces\n"))
 +            self.assertEqual(self.invoke(value, pin=str(pin)), (str(pin), "canary:pin:argument with spaces\n"))
 +
 +    def test_unusable_explicit_pin_does_not_fall_back(self):
@@ -309,7 +315,7 @@
 +        path_cli = self.seed(self.tools / "codex", "path")
 +        pin = self.seed(self.root / "raw pinned cli", "pin")
 +        self.assertEqual(self.invoke("relative", raw=True),
-+                         (str(path_cli), "canary:path:argument with spaces\n"))
++                         ("codex", "canary:path:argument with spaces\n"))
 +        self.assertEqual(self.invoke(None, pin=str(pin), raw=True),
 +                         (str(pin), "canary:pin:argument with spaces\n"))
 +
