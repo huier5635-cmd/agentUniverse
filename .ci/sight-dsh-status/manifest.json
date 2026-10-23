@@ -1,0 +1,21 @@
+{
+  "base": "5351c892f2e89d6be799ebdbeea948c173d3d7c2",
+  "issue": 8307,
+  "files": [
+    {
+      "path": "src/agentsight/dsh-plugin/src/index.ts",
+      "original_sha256": "5c91d6b57465637a257b20baeff2fcdc9785f4a6cdfde623f89ddfa4a65ca1af",
+      "candidate_sha256": "f60231ecba8ebbcc041a17b853f7c5d3fc2ee7f7b29a8a08bb93dbc6cc6fed9b"
+    },
+    {
+      "path": "src/agentsight/dsh-plugin/package.json",
+      "original_sha256": "dc00faa0c944d1ed7dd4583c80bc42b6250c61a740a58a42de45338385d72c59",
+      "candidate_sha256": "9b9bf69a4dcac98f3813cdfa2ca60d58218a98a1cbc18a0b3a5b24bfeb5455a4"
+    },
+    {
+      "path": "src/agentsight/dsh-plugin/test/status.test.mjs",
+      "original_sha256": null,
+      "candidate_sha256": "5c6ca6c6ab55ace9463bf335520d478f8e2d0e3abdc43ec8f019eb1c56b0d599"
+    }
+  ]
+}
