@@ -1,0 +1,33 @@
+name: ANOLISA image endpoint error validation
+on:
+  push:
+    branches: [ci/anolisa-image-http-errors]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11.6'
+      - uses: actions/checkout@v4
+        with:
+          repository: agentic-os-org/ANOLISA
+          ref: 5351c892f2e89d6be799ebdbeea948c173d3d7c2
+          path: upstream
+          persist-credentials: false
+      - name: Install formatting and lint tools
+        run: python -m pip install black==25.1.0 isort==5.13.2 ruff==0.11.13
+      - name: Verify original, candidate and guard mutation
+        run: python -B ci/anolisa-image-http-errors/validate.py upstream evidence/image-http-errors
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: anolisa-image-http-errors-evidence
+          path: evidence/image-http-errors

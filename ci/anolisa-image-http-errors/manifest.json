@@ -1,0 +1,26 @@
+{
+  "base": "5351c892f2e89d6be799ebdbeea948c173d3d7c2",
+  "issue": 5237,
+  "files": [
+    {
+      "path": "src/os-skills/others/image-gen/scripts/generate_image.py",
+      "mode": "100644",
+      "new": false,
+      "original_sha256": "ebbc2a8731fe53062835eda73e1da0efdd4df09163edbbbea7693a5bfcd091a8",
+      "original_blob": "603e41fb8fe1e10a2ab36278b04e9a87848cd402",
+      "fixed_sha256": "fe56190539c0e027dc73f661744df3129fbc753da408e6bd558fd196c582739b",
+      "fixed_blob": "aabcc91ef6f551394d3d7e2b98f92cabe3d4a1d2"
+    },
+    {
+      "path": "tests/os-skills/test_image_gen_http_errors.py",
+      "mode": "100644",
+      "new": true,
+      "original_sha256": null,
+      "original_blob": null,
+      "fixed_sha256": "256d9ae6b1f2f803a47adf56f84377baf96a4d9017aeb101c674f1cbf79a3db0",
+      "fixed_blob": "ab2ecea0334ffd02657386c59ca4fb988119543a"
+    }
+  ],
+  "formatterScope": "Black: changed _compat function and new test; isort: both changed files",
+  "sourceTree": "a0769de626619bca9af9170b6c38be9746890f87"
+}
