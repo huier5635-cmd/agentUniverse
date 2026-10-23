@@ -1,0 +1,168 @@
+--- a/src/tokenless/adapters/tokenless/qoder/hooks/run-hook.sh
++++ b/src/tokenless/adapters/tokenless/qoder/hooks/run-hook.sh
+@@ -26,11 +26,11 @@
+     "/usr/share/anolisa/adapters/tokenless/common/hooks/${SCRIPT}"
+ )
+ 
+-# Minimal runners may omit HOME. Keep the user-local fallback conditional so
+-# an environment omission cannot bypass the fail-open behavior below.
+-if [ -n "${HOME:-}" ]; then
+-    CANDIDATES+=("${HOME}/.local/share/anolisa/adapters/tokenless/common/hooks/${SCRIPT}")
+-fi
++# Relative HOME paths resolve against the host tool's working directory,
++# not a user installation. Only absolute paths may add a user-local hook.
++case "${HOME:-}" in
++    /*) CANDIDATES+=("${HOME}/.local/share/anolisa/adapters/tokenless/common/hooks/${SCRIPT}") ;;
++esac
+ 
+ for candidate in "${CANDIDATES[@]}"; do
+     [ -f "$candidate" ] || continue
+--- a/src/tokenless/tests/test-qoder-adapter-install.sh
++++ b/src/tokenless/tests/test-qoder-adapter-install.sh
+@@ -255,6 +255,121 @@
+     fail "hook wrapper accepted a traversal path: ${traversal_out:-<no output>}"
+ fi
+ 
++if RUN_HOOK_TEST_SOURCE="$RUN_HOOK_SH" python3 - <<'PYEOF'
++import os
++from pathlib import Path
++import subprocess
++import tempfile
++import unittest
++
++
++class HookHomeTest(unittest.TestCase):
++    def setUp(self) -> None:
++        self.temporary = tempfile.TemporaryDirectory(prefix="tokenless-qoder-home-")
++        self.addCleanup(self.temporary.cleanup)
++        self.root = Path(self.temporary.name).resolve()
++        self.cwd = self.root / "work"
++        self.cwd.mkdir()
++        self.wrapper = self.root / "plugin/hooks/run-hook.sh"
++        self.wrapper.parent.mkdir(parents=True)
++        self.system_local = self.root / "system-local"
++        self.system_share = self.root / "system-share"
++        source = Path(os.environ["RUN_HOOK_TEST_SOURCE"]).read_text(encoding="utf-8")
++        # Keep host-installed FHS hooks out of this private dispatch namespace.
++        # Only the two fixed roots move; all wrapper logic stays unchanged.
++        for old, new in (
++            ("/usr/local/share/anolisa", self.system_local),
++            ("/usr/share/anolisa", self.system_share),
++        ):
++            self.assertEqual(source.count(old), 1)
++            source = source.replace(old, str(new))
++        self.wrapper.write_text(source, encoding="utf-8")
++        self.marker = self.root / "unexpected-hook-ran"
++
++    def seed_home(self, home: str) -> None:
++        base = Path(home)
++        if not base.is_absolute():
++            base = self.cwd / base
++        self.assertTrue(base.resolve().is_relative_to(self.root))
++        hook = base / ".local/share/anolisa/adapters/tokenless/common/hooks/tool_ready_hook.sh"
++        hook.parent.mkdir(parents=True, exist_ok=True)
++        hook.write_text(
++            '#!/usr/bin/env bash\n'
++            'printf executed >> "$QODER_HOME_TEST_MARKER"\n'
++            'printf "selected:%s:%s\\n" "$#" "${1:-}"\n',
++            encoding="utf-8",
++        )
++
++    def invoke(self, home: str | None) -> subprocess.CompletedProcess[str]:
++        env = dict(os.environ, QODER_HOME_TEST_MARKER=str(self.marker))
++        env.pop("HOME", None)
++        if home is not None:
++            env["HOME"] = home
++        return subprocess.run(
++            ["bash", str(self.wrapper), "tool_ready_hook.sh", "argument with spaces"],
++            cwd=self.cwd, env=env, capture_output=True, text=True, check=False,
++        )
++
++    def test_unset_and_empty_home_fail_open(self) -> None:
++        self.seed_home(".")
++        for home in (None, ""):
++            with self.subTest(home=home):
++                result = self.invoke(home)
++                self.assertEqual(result.returncode, 0, result.stderr)
++                self.assertEqual(result.stdout, "{}\n")
++                self.assertFalse(self.marker.exists())
++
++    def test_relative_home_cannot_execute_cwd_content(self) -> None:
++        for home in ("relative-home", "relative home", ".", "../parent-home"):
++            with self.subTest(home=home):
++                self.marker.unlink(missing_ok=True)
++                self.seed_home(home)
++                result = self.invoke(home)
++                self.assertEqual(result.returncode, 0, result.stderr)
++                self.assertEqual(result.stdout, "{}\n")
++                self.assertFalse(self.marker.exists())
++
++    def test_absolute_home_with_spaces_preserves_arguments(self) -> None:
++        home = str(self.root / "absolute home")
++        self.seed_home(home)
++        result = self.invoke(home)
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(result.stdout, "selected:1:argument with spaces\n")
++        self.assertEqual(self.marker.read_text(), "executed")
++
++    def seed_system_hook(self) -> None:
++        hook = self.system_local / "adapters/tokenless/common/hooks/tool_ready_hook.sh"
++        hook.parent.mkdir(parents=True)
++        hook.write_text("printf 'system-hook\\n'\n", encoding="utf-8")
++
++    def test_system_hook_remains_available_with_relative_home(self) -> None:
++        self.seed_home("relative-home")
++        self.seed_system_hook()
++        result = self.invoke("relative-home")
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(result.stdout, "system-hook\n")
++        self.assertFalse(self.marker.exists())
++
++    def test_bundled_hook_still_precedes_system_and_home(self) -> None:
++        self.seed_home("relative-home")
++        self.seed_system_hook()
++        hook = self.root / "common/hooks/tool_ready_hook.sh"
++        hook.parent.mkdir(parents=True)
++        hook.write_text("printf 'bundled-hook\\n'\n", encoding="utf-8")
++        result = self.invoke("relative-home")
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(result.stdout, "bundled-hook\n")
++        self.assertFalse(self.marker.exists())
++
++
++unittest.main()
++PYEOF
++then
++    pass "hook dispatch trusts only absolute HOME without changing hook precedence"
++else
++    fail "hook dispatch HOME boundary or hook precedence is incorrect"
++fi
++
+ # ANOLISA_DRY_RUN previews the two lifecycle actions and touches nothing.
+ if ! HOME="$FAKE_HOME" ANOLISA_ADAPTER_DIR="$ADAPTER_DIR" bash "$INSTALL_SH" >/dev/null; then
+     fail "failed to reinstall plugin for dry-run coverage"
+--- a/docs/user-guide/en/tokenless/framework-integration.md
++++ b/docs/user-guide/en/tokenless/framework-integration.md
+@@ -490,6 +490,10 @@
+ 
+ Qoder IDE and qodercli may cache plugin configuration. Fully restart the IDE after enabling or upgrading. If an old hook path is reported, see [Qoder plugin cache issue](troubleshooting.md#qoder-plugin-cache-issue).
+ 
++The Qoder hook wrapper uses the user-local installation only when `HOME` is an
++absolute path. With `HOME` unset, empty, or relative, bundled and system hooks
++remain available; no working-directory-relative user fallback is added.
++
+ ### Claude Code
+ 
+ The marketplace plugin takes effect after restarting Claude Code. The install script may also offer a plugin refresh command.
+--- a/docs/user-guide/zh/tokenless/framework-integration.md
++++ b/docs/user-guide/zh/tokenless/framework-integration.md
+@@ -445,6 +445,9 @@
+ 
+ Qoder IDE 和 qodercli 可能缓存 Plugin 配置。启用或升级后应完全重启 IDE。若出现旧 Hook 路径错误，参阅[Qoder Plugin 缓存问题](troubleshooting.md#qoder-plugin-缓存问题)。
+ 
++Qoder Hook 包装器只在 `HOME` 为绝对路径时使用用户级安装。`HOME` 未设置、为空或为
++相对路径时，自带和系统 Hook 仍然可用，但不会基于当前工作目录添加用户级回退路径。
++
+ ### Claude Code
+ 
+ Marketplace Plugin 在 Claude Code 重启后生效，也可以按照安装脚本提示刷新 Plugin。

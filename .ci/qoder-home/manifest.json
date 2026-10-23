@@ -1,0 +1,32 @@
+{
+  "base": "5351c892f2e89d6be799ebdbeea948c173d3d7c2",
+  "issue": 8808,
+  "fixes": "13817938f0a8cf2b8df78d3e59f97302e4fb1947",
+  "files": [
+    {
+      "path": "src/tokenless/adapters/tokenless/qoder/hooks/run-hook.sh",
+      "mode": "100755",
+      "original_sha256": "c5ec9e4ac97d0c14734436b8ad1b668a885ba79458acb2c74ef85738e7f1ee89",
+      "fixed_sha256": "a44b6403e364aa5e9cc347025f386404bfc378dac4363f740ab2e21016b3b5bc"
+    },
+    {
+      "path": "src/tokenless/tests/test-qoder-adapter-install.sh",
+      "mode": "100755",
+      "original_sha256": "15f140cdd72a9292a40719cc8825f1d0831e947c6f6ac1367b291acd56da8cca",
+      "fixed_sha256": "dda1b431951c95c3e8882e78f190e0b90681ee9406db5bef2ffa5baaa0008e36"
+    },
+    {
+      "path": "docs/user-guide/en/tokenless/framework-integration.md",
+      "mode": "100644",
+      "original_sha256": "dfa3e46a96a77a539213aa8d148a6ae854ad1aa9ff7acda04695035e884ab5ac",
+      "fixed_sha256": "66c1560f4f79aea5fe58b7238a73c824568c124b23a349b8a7012657c58b9d31"
+    },
+    {
+      "path": "docs/user-guide/zh/tokenless/framework-integration.md",
+      "mode": "100644",
+      "original_sha256": "76915b2d312b6f10f0b259b754802feabae150ece14d192d23689e2ee8600c7e",
+      "fixed_sha256": "d2908da44d88a00aa5f9ffd10d4066d6ca1b1aeb194aba5e058a64d607aa6db8"
+    }
+  ],
+  "source_tree": "4528c0f9acaa720f90b8c8768ac38aec164262e3"
+}

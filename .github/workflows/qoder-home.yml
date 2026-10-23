@@ -1,0 +1,38 @@
+name: Qoder absolute HOME dispatch validation
+on:
+  push:
+    branches: [ci/qoder-absolute-home-20261023]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: payload
+      - uses: actions/checkout@v4
+        with:
+          repository: agentic-os-org/ANOLISA
+          ref: 5351c892f2e89d6be799ebdbeea948c173d3d7c2
+          path: upstream
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11.6'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Capture the disposable Linux test environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          { python --version; node --version; npm --version; bash --version; shellcheck --version; git -C upstream rev-parse HEAD; } > evidence/environment.txt
+      - name: Reproduce original dispatch, validate fix and complete adapter gates
+        run: python payload/.ci/qoder-home/validate.py upstream evidence
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qoder-absolute-home-evidence
+          path: evidence/
