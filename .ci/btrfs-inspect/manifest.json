@@ -1,0 +1,36 @@
+{
+  "base": "5351c892f2e89d6be799ebdbeea948c173d3d7c2",
+  "files": [
+    {
+      "path": "src/ws-ckpt/src/crates/cli/src/main.rs",
+      "original_sha256": "b6cf60068f9b8556d74532a8127ef0ec371cc2aa42937141748d50d71a0329b6",
+      "candidate_sha256": "08bad361623ab1f02caa2cefdedd16eb635dd5bad7960e9675dfd111a108aaa6"
+    },
+    {
+      "path": "src/ws-ckpt/src/crates/common/src/lib.rs",
+      "original_sha256": "8c3126ef0ebed57bfed0b127ad70e7b7b6bd2cf68779328311669b7bbe9b2704",
+      "candidate_sha256": "3d2fd0e69fed4de452e85454d48ffa9d44881719c731fc304b9df239e5cba276"
+    },
+    {
+      "path": "src/ws-ckpt/src/crates/daemon/src/backend_detect.rs",
+      "original_sha256": "888c4cdceb80d5f9ffa9ee6ffe3836b338ab7fd020f1bed102eb5212394cbe8a",
+      "candidate_sha256": "f087546d01364845c3eeb2f3ca24d8852c38fd209deb0b2e09d4190ea89b5b19"
+    },
+    {
+      "path": "src/ws-ckpt/src/crates/daemon/src/dispatcher.rs",
+      "original_sha256": "89def706afbbd5a2ebe26fa87bdf30fb9975731a44b5b8409da3d7668fd79e3a",
+      "candidate_sha256": "eaa0ccc3472ca57e6fd919f69f641860af94e03b5ba89bbbc9cf424666cc32e7"
+    },
+    {
+      "path": "src/ws-ckpt/src/crates/daemon/src/startup.rs",
+      "original_sha256": "00b6a642c0618d42df340504a87f066957dbc5baadae0fb5ca76758756fbe30e",
+      "candidate_sha256": "3dcf749ef6b7dee9a9749fe89b6f681852f170c951e1bec035f86e64953b8c21"
+    },
+    {
+      "path": "src/ws-ckpt/src/crates/daemon/src/backends/btrfs_common.rs",
+      "original_sha256": "f9915ee431402c325044a0a4850cffbc833eba685d9b5a4bb9e6f8418e26bb7d",
+      "candidate_sha256": "9020ebda1d9944b4bc60e6c548e36bd97d91bcde9a7e46123d0063eecc7cb881"
+    }
+  ],
+  "stage": "unfinished implementation inspection"
+}

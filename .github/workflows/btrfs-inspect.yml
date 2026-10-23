@@ -1,0 +1,63 @@
+name: Inspect Btrfs mount restoration implementation
+on:
+  push:
+    branches: [ci/ckpt-btrfs-mount-wip-20261023]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: payload
+      - uses: actions/checkout@v4
+        with:
+          repository: agentic-os-org/ANOLISA
+          ref: 5351c892f2e89d6be799ebdbeea948c173d3d7c2
+          path: upstream
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: upstream/src/ws-ckpt/src
+      - name: Compile baseline and inspect the candidate
+        run: python3 payload/.ci/btrfs-inspect/inspect.py upstream evidence
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: btrfs-implementation-inspection
+          path: evidence/
+  native-capability:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Check isolated native filesystem test capabilities
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          exec > >(tee evidence/native-capability.txt) 2>&1
+          uname -a
+          if ! command -v btrfs >/dev/null || ! command -v rsync >/dev/null || ! command -v dmsetup >/dev/null; then
+            sudo timeout 120 apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=15 update
+            sudo timeout 120 apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=15 install -y btrfs-progs rsync dmsetup
+          fi
+          btrfs version
+          sudo modprobe btrfs
+          sudo modprobe loop
+          sudo dmsetup targets
+          sudo test -e /dev/loop-control
+          probe_root="$(mktemp -d "$RUNNER_TEMP/wsckpt-mount-capability.XXXXXX")"
+          trap 'sudo umount "$probe_root" 2>/dev/null || true' EXIT
+          sudo mount -t tmpfs -o size=1m none "$probe_root"
+          mountpoint "$probe_root"
+          sudo umount "$probe_root"
+          echo 'Native mount, loop and device-mapper capabilities verified in disposable runner'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: btrfs-native-capability
+          path: evidence/
