@@ -28,6 +28,19 @@
  if grep -Fq '${QODER_PLUGIN_ROOT}/hooks/run-hook.sh' "$CACHE/hooks/hooks.json" && \
          ! grep -Fq 'QODER_TOKENLESS_HOOKS' "$CACHE/hooks/hooks.json"; then
      pass "hook commands preserve the Qoder runtime plugin-root placeholder"
+@@ -243,9 +245,9 @@
+ 
+ if run_hook_out="$(env -u HOME bash "$RUN_HOOK_SH" missing-hook.py 2>/dev/null)" && \
+         [ "$run_hook_out" = "{}" ]; then
+-    pass "hook wrapper fails open when HOME is unset"
+-else
+-    fail "hook wrapper did not fail open without HOME: ${run_hook_out:-<no output>}"
++    pass "hook wrapper rejects non-allowlisted hooks with HOME unset"
++else
++    fail "hook wrapper accepted a non-allowlisted hook: ${run_hook_out:-<no output>}"
+ fi
+ 
+ if traversal_out="$(bash "$RUN_HOOK_SH" ../../../etc/passwd 2>/dev/null)" && \
 @@ -253,6 +255,121 @@
      pass "hook wrapper rejects paths outside the hook allowlist"
  else
@@ -69,7 +82,7 @@
 +        base = Path(home)
 +        if not base.is_absolute():
 +            base = self.cwd / base
-+        self.assertTrue(base.resolve().is_relative_to(self.root))
++        self.assertEqual(os.path.commonpath([str(base.resolve()), str(self.root)]), str(self.root))
 +        hook = base / ".local/share/anolisa/adapters/tokenless/common/hooks/tool_ready_hook.sh"
 +        hook.parent.mkdir(parents=True, exist_ok=True)
 +        hook.write_text(
@@ -79,7 +92,7 @@
 +            encoding="utf-8",
 +        )
 +
-+    def invoke(self, home: str | None) -> subprocess.CompletedProcess[str]:
++    def invoke(self, home):
 +        env = dict(os.environ, QODER_HOME_TEST_MARKER=str(self.marker))
 +        env.pop("HOME", None)
 +        if home is not None:
