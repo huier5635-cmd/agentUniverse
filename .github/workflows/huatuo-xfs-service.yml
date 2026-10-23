@@ -28,7 +28,7 @@ jobs:
             -v /dev:/dev -v "$PWD/source:/workspace" \
             -v "$PWD/.ci/xfs-service:/evidence:ro" \
             -v "$PWD/xfs-service-logs:/logs" \
-            -w /workspace huatuo-xfs-service bash /evidence/run.sh
+            -w /workspace huatuo-xfs-service sh -c 'apk add --no-cache bash && exec bash /evidence/run.sh'
       - name: Show verification results
         if: always()
         run: |

@@ -91,7 +91,7 @@ for path,h in m['files'].items():
  assert hashlib.sha256(Path(path).read_bytes()).hexdigest()==h['sha256'], path
 events=[json.loads(l) for l in Path('/logs/fixed-focused.jsonl').read_text().splitlines() if l.startswith('{')]
 tests=[e for e in events if e.get('Test') and '/' not in e['Test'] and e.get('Action') in ['pass','fail','skip']]
-assert len(tests)==10 and all(e['Action']=='pass' for e in tests)
+assert len(tests)==11 and all(e['Action']=='pass' for e in tests)
 assert not any(e['Action'] in ['fail','skip'] for e in events)
 assert set(subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines())=={
  'core/metrics/xfs_test.go','integration/test_metrics_xfs_hotplug.sh'}
