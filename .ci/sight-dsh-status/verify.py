@@ -1,4 +1,5 @@
 import argparse
+import atexit
 import hashlib
 import json
 import shutil
@@ -55,10 +56,9 @@ install_package["devDependencies"].update({
     "typescript": "5.9.3",
 })
 (SOURCE / package).write_text(json.dumps(install_package, indent=2) + "\n")
-try:
-    run("install", ["pnpm", "install", "--ignore-scripts"])
-finally:
-    (SOURCE / package).write_bytes(candidate_package)
+# pnpm verifies dependency pins before running a package script.
+atexit.register((SOURCE / package).write_bytes, candidate_package)
+run("install", ["pnpm", "install", "--ignore-scripts"])
 shutil.copyfile(PROJECT / "pnpm-lock.yaml", EVIDENCE / "resolved-dependencies.yaml")
 versions = {name: json.loads((PROJECT / "node_modules" / name / "package.json").read_text())["version"]
             for name in install_package["devDependencies"]}
@@ -87,6 +87,7 @@ try:
 finally:
     (SOURCE / source).write_bytes(candidate)
 run("public-test-command", ["pnpm", "test"])
+(SOURCE / package).write_bytes(candidate_package)
 for row in records:
     assert digest(SOURCE / row["path"]) == row["candidate_sha256"]
 run("diff-check", ["git", "-C", str(SOURCE), "diff", "--check"])
