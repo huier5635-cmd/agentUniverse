@@ -2,6 +2,12 @@
   "base": "5351c892f2e89d6be799ebdbeea948c173d3d7c2",
   "files": [
     {
+      "path": "src/agentsight/src/bin/cli/mod.rs",
+      "mode": "100644",
+      "originalSHA256": "a9082f1c50f58027fb26c563e3930e21fa02d0edf3d7e7c98e944846b77585d9",
+      "unformattedSHA256": "13e0da997ac520293afca00e639a15cc84f25cfcc7cbac691cc1f34ff8e33f65"
+    },
+    {
       "path": "src/agentsight/src/database.rs",
       "mode": "100644",
       "originalSHA256": "dd59b47201d359d9144f9996997732f26561400724dd85bde2c37d3bfbb4c5db",
