@@ -1,0 +1,27 @@
+{
+  "base": "5351c892f2e89d6be799ebdbeea948c173d3d7c2",
+  "issue": 5237,
+  "files": [
+    {
+      "path": "src/os-skills/others/image-gen/scripts/generate_image.py",
+      "mode": "100644",
+      "new": false,
+      "original_sha256": "ebbc2a8731fe53062835eda73e1da0efdd4df09163edbbbea7693a5bfcd091a8",
+      "original_blob": "603e41fb8fe1e10a2ab36278b04e9a87848cd402",
+      "fixed_sha256": "690f4530c267bde36b1d6abe8eba315789883d23388f704bc4db3f2f20a1bd87",
+      "fixed_blob": "4eef7deabce1ddfd91fc3689550460f023f4ca5d"
+    },
+    {
+      "path": "tests/os-skills/test_image_gen_http_errors.py",
+      "mode": "100644",
+      "new": true,
+      "original_sha256": null,
+      "original_blob": null,
+      "fixed_sha256": "e439e091903488f00830bbdb6cda1a2429b7c7d68d3372fd21cd7451e76459e7",
+      "fixed_blob": "4df954e1f7f7aace1e739261bc62c79c85dba0cf"
+    }
+  ],
+  "formatterScope": "Black: new helper, HTTP exception handler and tests; isort: imports; original request/success lines retained",
+  "reviewHead": "289b4b2a66c852c4f8da55b20b6e9551f3cbc5da",
+  "sourceTree": "2cf37f9d10cb466a592a1914608aa7d0ed719634"
+}
