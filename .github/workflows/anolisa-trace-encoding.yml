@@ -1,0 +1,46 @@
+name: ANOLISA trace encoding validation
+on:
+  push:
+    branches: [ci/anolisa-trace-encoding]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: agentic-os-org/ANOLISA
+          ref: 6e47beddfee351d01a5e47f55324605e138005f6
+          path: official
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install project and development dependencies
+        run: python -m pip install --index-url https://pypi.org/simple -e 'official/benchmark/swe-runner[dev]'
+      - name: Compare baseline and candidate
+        run: python .ci/anolisa-trace/validate.py
+      - name: Publish bounded diagnostics
+        if: always()
+        run: |
+          python - <<'PY'
+          import pathlib
+          p=pathlib.Path('evidence/summary.json')
+          if p.exists():
+              print('::notice title=ANOLISA trace validation::'+p.read_text().replace('%','%25').replace('\n','%0A'))
+          else:
+              for p in sorted(pathlib.Path('evidence').glob('*.log')):
+                  tail=p.read_text(errors='replace')[-2800:].replace('%','%25').replace('\r','%0D').replace('\n','%0A')
+                  print('::warning title='+p.name+'::'+tail)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: anolisa-trace-encoding-evidence
+          path: evidence/
+          if-no-files-found: error

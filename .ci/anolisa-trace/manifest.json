@@ -1,0 +1,19 @@
+{
+  "base": {
+    "sha": "6e47beddfee351d01a5e47f55324605e138005f6",
+    "tree": "71cebec10cf73a6fa17e0edddd2e27d82867cf35",
+    "downloadedAt": "2026-10-23T09:43:05.742Z"
+  },
+  "files": [
+    {
+      "path": "benchmark/swe-runner/src/swe_runner/trace_extraction/openclaw_jsonl.py",
+      "original_sha256": "b9c88076922bf169c57562848efee0cad1c8b8047caf32e133a8b3df62861701",
+      "candidate_sha256": "0fa14eaf0bd022cdb5adae9c491eadc0e1a62ba2759d75de4a0f66857cb34552"
+    },
+    {
+      "path": "benchmark/swe-runner/tests/unit/trace_extraction/test_openclaw_jsonl_encoding.py",
+      "original_sha256": null,
+      "candidate_sha256": "12aea6c9e70102a123db5d50cf391fa3ec768c969d484a3388c29c37da8bd427"
+    }
+  ]
+}
