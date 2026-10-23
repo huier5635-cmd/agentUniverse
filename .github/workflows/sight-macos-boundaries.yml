@@ -1,0 +1,133 @@
+name: AgentSight native platform boundaries
+on:
+  push:
+    branches: [ci/sight-macos-boundaries]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: agentic-os-org/ANOLISA
+          ref: 5351c892f2e89d6be799ebdbeea948c173d3d7c2
+          path: official
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: sight-local-label-prepared
+          path: label-prepared
+          run-id: 39958395342
+          github-token: ${{ github.token }}
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: rustfmt
+      - run: python3 .ci/sight-macos-boundaries/prepare.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sight-platform-prepared
+          path: prepared/
+          if-no-files-found: error
+  gates:
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            mode: native
+          - os: ubuntu-24.04
+            mode: linux
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      RUSTUP_TOOLCHAIN: '1.89.0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: agentic-os-org/ANOLISA
+          ref: 5351c892f2e89d6be799ebdbeea948c173d3d7c2
+          path: official
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: sight-platform-prepared
+          path: prepared
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: official/src/agentsight
+          shared-key: ${{ matrix.mode == 'linux' && 'sight-dsh-status-gates' || 'sight-local-label-macos' }}
+          cache-on-failure: true
+      - name: Install Linux native build dependencies
+        if: matrix.mode == 'linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y clang llvm libclang-dev libbpf-dev libelf-dev elfutils libssl-dev zlib1g-dev pkg-config perl
+      - name: Run platform checks without suppressing warnings or skipping failing tests
+        run: python3 .ci/sight-macos-boundaries/verify.py ${{ matrix.mode }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sight-platform-${{ matrix.mode }}
+          path: evidence/
+          if-no-files-found: error
+  labels:
+    needs: gates
+    runs-on: macos-14
+    timeout-minutes: 35
+    env:
+      CARGO_BUILD_JOBS: '3'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      RUSTUP_TOOLCHAIN: '1.89.0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: agentic-os-org/ANOLISA
+          ref: 5351c892f2e89d6be799ebdbeea948c173d3d7c2
+          path: official
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: sight-platform-native
+          path: platform-verified
+      - uses: actions/download-artifact@v4
+        with:
+          name: sight-local-label-prepared
+          path: prepared
+          run-id: 39958395342
+          github-token: ${{ github.token }}
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: official/src/agentsight
+          shared-key: sight-local-label-macos
+          cache-on-failure: true
+      - run: python3 .ci/sight-macos-boundaries/verify-labels.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sight-local-label-with-platform-prerequisite
+          path: evidence/
+          if-no-files-found: error

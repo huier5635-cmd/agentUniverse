@@ -1,0 +1,106 @@
+--- a/src/agentsight/src/database.rs
++++ b/src/agentsight/src/database.rs
+@@ -3,7 +3,9 @@
+ use std::collections::{BTreeMap, HashMap};
+ use std::path::{Path, PathBuf};
+ use std::sync::Mutex;
+-use std::time::{Duration, Instant};
++use std::time::Duration;
++#[cfg(target_os = "linux")]
++use std::time::Instant;
+ 
+ use agentsight_sqlite_lifecycle::{
+     LifecycleError, MaintenanceJob, MaintenanceWorker, MaintenanceWorkerState,
+@@ -417,6 +419,7 @@
+     /// The action receives `true` when retention/capacity maintenance is due and
+     /// `false` for a passive checkpoint. Returning false keeps cleanup due on
+     /// the next worker tick; failed cleanup also remains due on retry.
++    #[cfg(target_os = "linux")]
+     pub(crate) fn maintenance_job_with_checkpoints(
+         &self,
+         id: DatabaseId,
+@@ -597,6 +600,7 @@
+         ))
+     }
+ 
++    #[cfg(target_os = "linux")]
+     #[test]
+     fn checkpoint_ticks_do_not_accelerate_cleanup_and_failed_cleanup_is_retried() {
+         let manager =
+@@ -627,6 +631,7 @@
+         assert_eq!(*calls.lock().unwrap(), [true, true, false, false]);
+     }
+ 
++    #[cfg(target_os = "linux")]
+     #[test]
+     fn yielded_cleanup_resumes_without_waiting_for_the_policy_interval() {
+         let manager =
+--- a/src/agentsight/src/local/server.rs
++++ b/src/agentsight/src/local/server.rs
+@@ -743,8 +743,10 @@
+             "agentsight-local-maintenance-{}",
+             std::process::id()
+         ));
+-        let mut config = StorageConfig::default();
+-        config.base_path = base.clone();
++        let config = StorageConfig {
++            base_path: base.clone(),
++            ..StorageConfig::default()
++        };
+         std::fs::create_dir_all(&base).unwrap();
+         let manager =
+             DatabaseManager::new(DatabaseRole::LocalServer, local_database_specs(&config)).unwrap();
+@@ -797,8 +799,10 @@
+             "agentsight-local-maintenance-zero-{}",
+             std::process::id()
+         ));
+-        let mut config = StorageConfig::default();
+-        config.base_path = base.clone();
++        let mut config = StorageConfig {
++            base_path: base.clone(),
++            ..StorageConfig::default()
++        };
+         config.optimization.check_interval_secs = 0;
+         config.reuse.check_interval_secs = 0;
+         let manager =
+--- a/src/agentsight/src/tokenizer/multi_model.rs
++++ b/src/agentsight/src/tokenizer/multi_model.rs
+@@ -50,12 +50,12 @@
+ }
+ 
+ pub fn get_global_tokenizer(model_id: &str) -> Result<Arc<LlmTokenizer>> {
+-    #[cfg(test)]
++    #[cfg(all(test, target_os = "linux"))]
+     GLOBAL_TOKENIZER_LOOKUPS.with(|count| count.set(count.get() + 1));
+     get_global_manager().get_for_model(model_id)
+ }
+ 
+-#[cfg(test)]
++#[cfg(all(test, target_os = "linux"))]
+ thread_local! {
+     /// Global tokenizer lookups performed on this thread. Thread-local so a
+     /// test asserting that a disabled feature performs no lookup cannot race
+@@ -64,7 +64,7 @@
+ }
+ 
+ /// Number of global tokenizer lookups performed on the calling thread.
+-#[cfg(test)]
++#[cfg(all(test, target_os = "linux"))]
+ pub(crate) fn global_tokenizer_lookup_count() -> usize {
+     GLOBAL_TOKENIZER_LOOKUPS.with(std::cell::Cell::get)
+ }
+--- a/src/agentsight/src/utils/mod.rs
++++ b/src/agentsight/src/utils/mod.rs
+@@ -1,3 +1,4 @@
++#[cfg(target_os = "linux")]
+ pub(crate) mod cpu_budget;
+ #[cfg(target_os = "linux")]
+ pub mod decompress;
+@@ -55,6 +56,7 @@
+     }
+ }
+ 
++#[cfg(target_os = "linux")]
+ pub(crate) mod retained;
+ #[cfg(target_os = "linux")]
+ pub(crate) mod stream_decode;

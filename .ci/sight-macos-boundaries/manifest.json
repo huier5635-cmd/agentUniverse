@@ -1,0 +1,32 @@
+{
+  "base": "5351c892f2e89d6be799ebdbeea948c173d3d7c2",
+  "files": [
+    {
+      "path": "src/agentsight/src/database.rs",
+      "mode": "100644",
+      "originalSHA256": "dd59b47201d359d9144f9996997732f26561400724dd85bde2c37d3bfbb4c5db",
+      "unformattedSHA256": "d2c95e0c19b5a00093579db1f5658ae6f944b46d758dbac858e9ce9e33c26add"
+    },
+    {
+      "path": "src/agentsight/src/local/server.rs",
+      "mode": "100644",
+      "originalSHA256": "89c90f181ddbad4861b1bf49b2b0fbcd74bae4366ea1afc3f378ccdcb59175b3",
+      "unformattedSHA256": "4a15c10d1bcd2072dbb5311415b9ce4261a05d4a24bcd4ccfeee1389b9e0b22f"
+    },
+    {
+      "path": "src/agentsight/src/tokenizer/multi_model.rs",
+      "mode": "100644",
+      "originalSHA256": "8469a401c3b6a64c1530aaa4db928c0f02c2744796327f68d3c8a33d0abbec0d",
+      "unformattedSHA256": "43fdf470441a6908d75169e9ac22431abd001a09450f0099d6c0b9ae6c0278a8"
+    },
+    {
+      "path": "src/agentsight/src/utils/mod.rs",
+      "mode": "100644",
+      "originalSHA256": "8dfe4515be714d0233339b8b1a509cda72fa09df0d847f2398d46ad3a320a8db",
+      "unformattedSHA256": "5633c3c601e448d831126fed3f37697b553872f7ef26f75491e28a0ad3bd8765"
+    }
+  ],
+  "sourcePublished": false,
+  "knownLinuxFailure": "storage::sqlite::genai::tokenless::tests::applied_modes_sources_filters_and_pagination",
+  "knownLinuxFailureEvidenceRun": 39949157918
+}
