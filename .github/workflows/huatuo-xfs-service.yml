@@ -40,6 +40,30 @@ jobs:
           for file in xfs-service-logs/*.log xfs-service-logs/*.json xfs-service-logs/cleanup.txt; do
             test ! -f "$file" || { echo "$file"; tail -45 "$file"; }
           done
+      - name: Publish bounded verification diagnostics
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          logs=Path('xfs-service-logs')
+          summary=logs/'summary.json'
+          if summary.exists():
+              message=summary.read_text()
+              kind='notice'
+          else:
+              paths=sorted(logs.glob('*.log'),key=lambda p:p.stat().st_mtime)
+              parts=[]
+              for path in paths[-3:]:
+                  parts.append(path.name+'\n'+path.read_text(errors='replace')[-5500:])
+              focused=logs/'fixed-focused.jsonl'
+              if focused.exists():
+                  parts.append(focused.name+'\n'+focused.read_text(errors='replace')[-5500:])
+              message='\n\n'.join(parts)[-18000:] or 'Validation did not produce test logs; inspect preceding setup step.'
+              kind='error'
+          message=message.replace('%','%25').replace('\r','%0D').replace('\n','%0A')
+          print('::'+kind+' title=XFS verification::'+message)
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
