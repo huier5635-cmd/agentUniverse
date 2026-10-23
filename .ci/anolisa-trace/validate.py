@@ -15,6 +15,9 @@ EVIDENCE=ROOT/'evidence'
 EVIDENCE.mkdir(exist_ok=True)
 manifest=json.loads((DRIVER/'manifest.json').read_text())
 env=dict(os.environ,PYTHONPATH=str(PROJECT/'src'))
+env.update(TERM='dumb',NO_COLOR='1',COLUMNS='120')
+env.pop('FORCE_COLOR',None)
+env.pop('CLICOLOR_FORCE',None)
 source,tests=[record['path'] for record in manifest['files']]
 for record in manifest['files']:
     path=SOURCE/record['path']
@@ -45,6 +48,10 @@ run('baseline',[py,'-m','pytest',target,'-q','--tb=short','--junitxml='+str(EVID
 baseline=counts(EVIDENCE/'baseline.xml')
 assert baseline=={'tests':8,'failures':4,'errors':0,'skipped':0},baseline
 assert all('UnicodeDecodeError' in failure.text for failure in ET.parse(EVIDENCE/'baseline.xml').getroot().iter('failure'))
+run('baseline-full',[py,'-m','pytest','tests','-q','--tb=short','--junitxml='+str(EVIDENCE/'baseline-full.xml')],1)
+baseline_full=counts(EVIDENCE/'baseline-full.xml')
+assert baseline_full['tests']>=300 and baseline_full['failures']==4 and not baseline_full['errors'] and not baseline_full['skipped'],baseline_full
+assert all('UnicodeDecodeError' in failure.text for failure in ET.parse(EVIDENCE/'baseline-full.xml').getroot().iter('failure'))
 shutil.copyfile(DRIVER/'files'/source,SOURCE/source)
 for record in manifest['files']:
     assert hashlib.sha256((SOURCE/record['path']).read_bytes()).hexdigest()==record['candidate_sha256']
@@ -58,5 +65,7 @@ full=counts(EVIDENCE/'full.xml')
 assert full['tests']>=300 and not any(full[k] for k in ('failures','errors','skipped')),full
 run('diff-check',['git','diff','--check'],cwd=SOURCE)
 (EVIDENCE/'summary.json').write_text(json.dumps({'base':manifest['base']['sha'],'baseline':baseline,'focused':focused,
-                                             'full':full,'files':manifest['files'],'python':sys.version,'platform':sys.platform},indent=2))
+                                             'baseline_full':baseline_full,'full':full,'files':manifest['files'],
+                                             'python':sys.version,'platform':sys.platform,
+                                             'terminal':{'TERM':'dumb','NO_COLOR':'1','COLUMNS':'120'}},indent=2))
 (EVIDENCE/'dependencies.txt').write_text(subprocess.check_output([py,'-m','pip','freeze'],text=True))
