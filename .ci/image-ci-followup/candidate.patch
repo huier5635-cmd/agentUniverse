@@ -1,0 +1,33 @@
+--- a/.github/workflows/os-skills-prebuilt-ci.yaml
++++ b/.github/workflows/os-skills-prebuilt-ci.yaml
+@@ -4,6 +4,7 @@
+   pull_request:
+     paths:
+       - 'src/os-skills/**'
++      - 'tests/os-skills/test_image_gen_http_errors.py'
+       - '.github/actions/build-os-skills-prebuilt/**'
+       - '.github/actions/prebuilt-rust-common/**'
+       - '.github/workflows/os-skills-prebuilt-ci.yaml'
+@@ -29,5 +30,6 @@
+       - name: Verify raw package and action
+         run: |
+           python3 -m unittest discover -s src/os-skills/tests -p test_raw_packaging.py
++          python3 tests/os-skills/test_image_gen_http_errors.py
+           python3 .github/actions/prebuilt-rust-common/test_plan_matrix.py
+           bash .github/actions/build-os-skills-prebuilt/test.sh
+--- a/tests/os-skills/test_image_gen_http_errors.py
++++ b/tests/os-skills/test_image_gen_http_errors.py
+@@ -1,10 +1,9 @@
+ #!/usr/bin/env python3
+ """Image endpoint errors must not silently switch generation providers.
+ 
+-Original regression baseline on unchanged main 5351c892f: seven test methods,
+-14 failing error subcases (SystemExit not raised); successful/fallback controls
+-pass. Review regressions additionally cover visible fallback diagnostics,
+-empty responses, bounded reads, control characters and credential redaction.
++Owned loopback servers exercise HTTP fallback decisions, diagnostic read
++failures, bounded and redacted errors, and successful-response controls.
++The suite never calls a paid image-generation service.
+ """
+ 
+ import http.client

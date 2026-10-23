@@ -1,0 +1,22 @@
+{
+  "base": "9eac57b88a50b64e38d0f1cebca5489e4283408c",
+  "baseTree": "18e78f51412b057fac5c9698ff16ef01a21c1517",
+  "dependsPr": 8932,
+  "sourcePublished": false,
+  "publishOnlyAfterActualMergeAndCapacity": true,
+  "workflow": ".github/workflows/os-skills-prebuilt-ci.yaml",
+  "test": "tests/os-skills/test_image_gen_http_errors.py",
+  "script": "src/os-skills/others/image-gen/scripts/generate_image.py",
+  "files": [
+    {
+      "path": ".github/workflows/os-skills-prebuilt-ci.yaml",
+      "originalSHA256": "afd996b7ff480e3d6137abef7a737de41cc4a322a4f766c9a88c10df10a2c15b",
+      "fixedSHA256": "041b8bfd562ea1c3ac3b96c3ea52746819f6dabc0a49cfbca250624e08e6a5ab"
+    },
+    {
+      "path": "tests/os-skills/test_image_gen_http_errors.py",
+      "originalSHA256": "73f27e23d192eb851141d339926462ecafb33358819dac12ff9d7bae6734ea3a",
+      "fixedSHA256": "bfe7d0410bd47c20695681df09df66dd69e4941fab991b2548a92f77f1485610"
+    }
+  ]
+}

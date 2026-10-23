@@ -1,0 +1,35 @@
+name: Image regression CI wiring validation
+on:
+  push:
+    branches: [ci/image-ci-followup-20261023]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: huier5635-cmd/ANOLISA
+          ref: 9eac57b88a50b64e38d0f1cebca5489e4283408c
+          path: upstream
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11.6'
+      - name: Record environment
+        run: |
+          mkdir -p evidence
+          { python --version; bash --version; git -C upstream rev-parse HEAD; } > evidence/environment.txt
+      - name: Compare original and revised workflow against a real regression
+        run: python .ci/image-ci-followup/validate.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: image-ci-followup
+          path: evidence/
+          if-no-files-found: error
