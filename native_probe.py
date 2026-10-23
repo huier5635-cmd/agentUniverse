@@ -4,6 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 import sqlite3
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -67,9 +68,28 @@ async def main():
         assert database.is_file()
         with sqlite3.connect(database) as check:
             healthy_stash_entries = check.execute("SELECT COUNT(*) FROM stash").fetchone()[0]
+        check.close()
         assert healthy_stash_entries > 0, "healthy control did not exercise the stash backend"
-        lock = sqlite3.connect(database, isolation_level=None)
-        lock.execute("BEGIN IMMEDIATE")
+        # Rust bundles SQLite; Python links its own SQLite library. A separate
+        # process makes the writer lock visible to both implementations.
+        lock = subprocess.Popen(
+            [
+                sys.executable,
+                "-u",
+                "-c",
+                "import sqlite3,sys; "
+                "db=sqlite3.connect(sys.argv[1],isolation_level=None); "
+                "db.execute('BEGIN IMMEDIATE'); print('locked',flush=True); "
+                "sys.stdin.readline(); db.rollback(); db.close()",
+                str(database),
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        assert lock.stdout.readline().strip() == "locked", "writer lock was not acquired"
+        assert lock.poll() is None
         error = None
         result = None
         try:
@@ -77,10 +97,10 @@ async def main():
         except TokenlessError as failure:
             error = str(failure)
         finally:
-            lock.rollback()
-            lock.close()
+            lock.communicate(input="\n", timeout=10)
+            assert lock.returncode == 0
         if MODE == "baseline":
-            assert error is not None and "stash" in error.lower(), (error, result)
+            assert error is not None and "stash" in error.lower(), "original adapter did not expose a stash failure"
         else:
             assert error is None and result is response
             assert text(result) == payload
@@ -90,7 +110,7 @@ async def main():
             "mode": MODE,
             "agentscope": agentscope.__version__,
             "native_sdk": True,
-            "backend_failure": "real SQLite BEGIN IMMEDIATE write lock",
+            "backend_failure": "separate process holding a SQLite BEGIN IMMEDIATE write lock",
             "healthy_control_compressed": True,
             "healthy_stash_entries": healthy_stash_entries,
             "original_mutated": False,
