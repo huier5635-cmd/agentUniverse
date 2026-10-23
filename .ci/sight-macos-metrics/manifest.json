@@ -1,0 +1,11 @@
+{
+  "base": "5351c892f2e89d6be799ebdbeea948c173d3d7c2",
+  "sourceFile": "src/agentsight/Cargo.toml",
+  "originalSHA256": "8c3ea8371b703749f98cb14457b86527f020edef8e943012c9619b6c9c34999d",
+  "fixedSHA256": "b6c796a834afa61371e2c7bf1e13e8be2c026ddb7dec314d5422e521ce230e67",
+  "sourceTree": "77d244a77007104b8ed262a8b26f60ab5de2429b",
+  "labelOnlyTree": "5fa77d80379d2db90981d41c423f50a7b349e525",
+  "withLabelTree": "7bdada94879285baab8b9108d661f856c43c0047",
+  "introducer": "27e67e42019f203e6c72a8b59a07b600f5f5057a",
+  "sourcePublished": false
+}
