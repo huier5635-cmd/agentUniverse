@@ -1,0 +1,78 @@
+name: ANOLISA AgentScope failure handling validation
+on:
+  push:
+    branches: [ci/anolisa-tokenless-fail-open]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: payload
+      - uses: actions/checkout@v4
+        with:
+          repository: agentic-os-org/ANOLISA
+          ref: 6e47beddfee351d01a5e47f55324605e138005f6
+          path: upstream
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install build and format tools
+        run: python -m pip install 'black==25.1.0' 'maturin>=1.9,<2'
+      - name: Validate original failure and complete fixed suites
+        run: python payload/validate.py upstream evidence
+      - name: Build native SDK from the checked source
+        run: maturin build --locked --profile python-release --manifest-path upstream/src/tokenless/python/tokenless/Cargo.toml --out wheels -i python
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agentscope-unit-evidence
+          path: evidence/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tokenless-native-wheel
+          path: wheels/*.whl
+  native:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        agentscope: ['1.0.11', '2.0.3']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: payload
+      - uses: actions/checkout@v4
+        with:
+          repository: agentic-os-org/ANOLISA
+          ref: 6e47beddfee351d01a5e47f55324605e138005f6
+          path: upstream
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: tokenless-native-wheel
+          path: wheels
+      - name: Install actual framework and native SDK
+        run: python -m pip install wheels/*.whl 'agentscope==${{ matrix.agentscope }}' 'mcp>=1.13,<2' tqdm greenlet
+      - name: Reproduce real storage failure and validate fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a upstream/src/tokenless/python/agentscope/src baseline-adapter
+          git -C upstream apply "$GITHUB_WORKSPACE/payload/candidate.patch"
+          mkdir -p evidence
+          PYTHONPATH="$GITHUB_WORKSPACE/baseline-adapter" python payload/native_probe.py baseline evidence/native-baseline.json > evidence/native-baseline.log 2>&1
+          PYTHONPATH="$GITHUB_WORKSPACE/upstream/src/tokenless/python/agentscope/src" python payload/native_probe.py fixed evidence/native-fixed.json > evidence/native-fixed.log 2>&1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agentscope-native-${{ matrix.agentscope }}-evidence
+          path: evidence/

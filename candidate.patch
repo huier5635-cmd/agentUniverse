@@ -1,0 +1,294 @@
+--- a/src/tokenless/python/agentscope/src/tokenless_agentscope/_v1.py
++++ b/src/tokenless/python/agentscope/src/tokenless_agentscope/_v1.py
+@@ -5,6 +5,7 @@
+ import copy
+ import inspect
+ import json
++import logging
+ from collections.abc import Mapping
+ from dataclasses import replace
+ from typing import Any
+@@ -34,6 +35,9 @@
+     build_tool_contracts,
+     retrieve_tool_declaration,
+ )
++
++
++logger = logging.getLogger(__name__)
+ 
+ 
+ class _TokenlessToolkit(Toolkit):
+@@ -246,28 +250,35 @@
+         for index, block in enumerate(response.content):
+             if block.get("type") != "text":
+                 continue
+-            transformed = await self.sdk.post_tool(
+-                PostToolRequest(
+-                    result_kind=ResultKind.TOOL,
+-                    tool_name=tool_call["name"],
+-                    content=block.get("text", ""),
+-                    status=self._status(response),
+-                    content_origin=contract.content_origin,
+-                    output_optimization=optimization,
+-                    capabilities=PostToolCapabilities(
+-                        replace_output=True,
+-                        recovery=(
+-                            RecoveryMethod.tool(self.config.retrieve_tool_name)
+-                            if self._status(response) == ToolResultStatus.SUCCESS
+-                            and optimization == OutputOptimization.NONE
+-                            else RecoveryMethod()
++            try:
++                transformed = await self.sdk.post_tool(
++                    PostToolRequest(
++                        result_kind=ResultKind.TOOL,
++                        tool_name=tool_call["name"],
++                        content=block.get("text", ""),
++                        status=self._status(response),
++                        content_origin=contract.content_origin,
++                        output_optimization=optimization,
++                        capabilities=PostToolCapabilities(
++                            replace_output=True,
++                            recovery=(
++                                RecoveryMethod.tool(self.config.retrieve_tool_name)
++                                if self._status(response) == ToolResultStatus.SUCCESS
++                                and optimization == OutputOptimization.NONE
++                                else RecoveryMethod()
++                            ),
++                            replace_with_text=True,
+                         ),
+-                        replace_with_text=True,
+-                    ),
+-                    attribution=self._attribution(tool_call["id"]),
+-                    command=command if isinstance(command, str) else None,
+-                )
+-            )
++                        attribution=self._attribution(tool_call["id"]),
++                        command=command if isinstance(command, str) else None,
++                    )
++                )
++            except TokenlessError:
++                logger.exception(
++                    "Tokenless post_tool failed for %s; preserving original result",
++                    tool_call["name"],
++                )
++                return response
+             extra_context = extra_context or transformed.additional_context
+             if transformed.output != block.get("text", ""):
+                 replacements[index] = TextBlock(type="text", text=transformed.output)
+--- a/src/tokenless/python/agentscope/src/tokenless_agentscope/_v2.py
++++ b/src/tokenless/python/agentscope/src/tokenless_agentscope/_v2.py
+@@ -4,6 +4,7 @@
+ 
+ import hashlib
+ import json
++import logging
+ import os
+ from collections.abc import AsyncGenerator, Callable, Mapping
+ from dataclasses import replace
+@@ -39,6 +40,8 @@
+     build_tool_contracts,
+     retrieve_tool_declaration,
+ )
++
++logger = logging.getLogger(__name__)
+ 
+ _STATE_KEY = "anolisa_tokenless"
+ 
+@@ -271,9 +274,7 @@
+         try:
+             arguments = json.loads(source.input)
+             if not isinstance(arguments, dict):
+-                raise TypeError(
+-                    "AgentScope tool input must decode to a JSON object"
+-                )
++                raise TypeError("AgentScope tool input must decode to a JSON object")
+         except (json.JSONDecodeError, TypeError):
+             # AgentScope repairs malformed tool arguments upstream, but the
+             # raw string still reaches the middleware. Raising here kills
+@@ -350,28 +351,35 @@
+         for index, block in enumerate(response.content):
+             if not isinstance(block, TextBlock):
+                 continue
+-            transformed = await self.sdk.post_tool(
+-                PostToolRequest(
+-                    result_kind=ResultKind.TOOL,
+-                    tool_name=tool_name,
+-                    content=block.text,
+-                    status=self._status(response.state),
+-                    content_origin=contract.content_origin,
+-                    output_optimization=optimization,
+-                    capabilities=PostToolCapabilities(
+-                        replace_output=True,
+-                        recovery=(
+-                            RecoveryMethod.tool(self.retrieve_tool_name)
+-                            if self._status(response.state) == ToolResultStatus.SUCCESS
+-                            and optimization == OutputOptimization.NONE
+-                            else RecoveryMethod()
++            try:
++                transformed = await self.sdk.post_tool(
++                    PostToolRequest(
++                        result_kind=ResultKind.TOOL,
++                        tool_name=tool_name,
++                        content=block.text,
++                        status=self._status(response.state),
++                        content_origin=contract.content_origin,
++                        output_optimization=optimization,
++                        capabilities=PostToolCapabilities(
++                            replace_output=True,
++                            recovery=(
++                                RecoveryMethod.tool(self.retrieve_tool_name)
++                                if self._status(response.state) == ToolResultStatus.SUCCESS
++                                and optimization == OutputOptimization.NONE
++                                else RecoveryMethod()
++                            ),
++                            replace_with_text=True,
+                         ),
+-                        replace_with_text=True,
+-                    ),
+-                    attribution=attribution,
+-                    command=command,
++                        attribution=attribution,
++                        command=command,
++                    )
+                 )
+-            )
++            except TokenlessError:
++                logger.exception(
++                    "Tokenless post_tool failed for %s; preserving original result",
++                    tool_name,
++                )
++                return response
+             extra_context = extra_context or transformed.additional_context
+             if transformed.output != block.text:
+                 replacements[index] = block.model_copy(update={"text": transformed.output})
+--- a/src/tokenless/tests/test_agentscope_v1.py
++++ b/src/tokenless/tests/test_agentscope_v1.py
+@@ -225,6 +225,51 @@
+ 
+ 
+ class AgentScopeV1Test(unittest.IsolatedAsyncioTestCase):
++    async def test_core_post_tool_failure_retains_complete_result(self) -> None:
++        for failure_at in (1, 2):
++            with self.subTest(failure_at=failure_at):
++                calls = 0
++
++                async def post_tool(request):
++                    nonlocal calls
++                    calls += 1
++                    if calls == failure_at:
++                        raise core.TokenlessError("stash backend unavailable")
++                    return _post_response("compressed", "temporary hint")
++
++                self.integration.sdk.post_tool = post_tool
++                content = [
++                    {"type": "text", "text": "first original result"},
++                    {"type": "image", "source": {"url": "https://example.com/image"}},
++                    {"type": "text", "text": "second original result"},
++                ]
++                response = _Response(content, metadata={"success": True, "duration": 3})
++                registered = self.toolkit.tools["large_result"]
++                with self.assertLogs("tokenless_agentscope._v1", level="ERROR"):
++                    result = await registered.postprocess_func(
++                        {"name": "large_result", "id": "failed-compression", "input": {}},
++                        response,
++                    )
++
++                self.assertIs(result, response)
++                self.assertIs(result.content, content)
++                self.assertEqual(result.metadata, {"success": True, "duration": 3})
++                self.assertEqual(content[0]["text"], "first original result")
++                self.assertEqual(content[2]["text"], "second original result")
++                self.assertEqual(calls, failure_at)
++
++    async def test_unrelated_post_tool_errors_remain_visible(self) -> None:
++        async def post_tool(request):
++            raise ValueError("application contract failure")
++
++        self.integration.sdk.post_tool = post_tool
++        registered = self.toolkit.tools["large_result"]
++        with self.assertRaisesRegex(ValueError, "application contract failure"):
++            await registered.postprocess_func(
++                {"name": "large_result", "id": "unexpected-failure", "input": {}},
++                _Response([{"type": "text", "text": "original result"}]),
++            )
++
+     def setUp(self) -> None:
+         contracts = {
+             name: api.ToolContract(core.ContentOrigin.API_RESPONSE)
+--- a/src/tokenless/tests/test_agentscope_middleware.py
++++ b/src/tokenless/tests/test_agentscope_middleware.py
+@@ -192,6 +192,74 @@
+ 
+ 
+ class MiddlewareTest(unittest.IsolatedAsyncioTestCase):
++    async def test_core_post_tool_failure_retains_complete_result(self) -> None:
++        for failure_at in (1, 2):
++            for state in (
++                _ResultState.SUCCESS,
++                _ResultState.ERROR,
++                _ResultState.INTERRUPTED,
++                _ResultState.DENIED,
++            ):
++                with self.subTest(failure_at=failure_at, state=state):
++                    calls = 0
++
++                    async def post_tool(request):
++                        nonlocal calls
++                        calls += 1
++                        if calls == failure_at:
++                            raise core.TokenlessError("stash backend unavailable")
++                        return _post_response("compressed", "temporary hint")
++
++                    self.middleware.sdk.post_tool = post_tool
++                    image = object()
++                    content = [
++                        _TextBlock("first original result"),
++                        image,
++                        _TextBlock("second original result"),
++                    ]
++                    response = _ToolResponse(content, state=state)
++                    chunk = _ToolChunk([_TextBlock("streamed chunk")])
++
++                    async def next_handler(**kwargs):
++                        yield chunk
++                        yield response
++
++                    with self.assertLogs("tokenless_agentscope._v2", level="ERROR"):
++                        result = await _collect(
++                            self.middleware.on_acting(
++                                self.agent,
++                                {"tool_call": _Call("failed-compression", "api", "{}")},
++                                next_handler,
++                            )
++                        )
++
++                    self.assertIs(result[0], chunk)
++                    self.assertIs(result[1], response)
++                    self.assertIs(response.content, content)
++                    self.assertIs(response.content[1], image)
++                    self.assertEqual(response.state, state)
++                    self.assertEqual(content[0].text, "first original result")
++                    self.assertEqual(content[2].text, "second original result")
++                    self.assertEqual(calls, failure_at)
++
++    async def test_unrelated_post_tool_errors_remain_visible(self) -> None:
++        async def post_tool(request):
++            raise ValueError("application contract failure")
++
++        self.middleware.sdk.post_tool = post_tool
++
++        async def next_handler(**kwargs):
++            yield _ToolResponse([_TextBlock("original result")])
++
++        with self.assertRaisesRegex(ValueError, "application contract failure"):
++            await _collect(
++                self.middleware.on_acting(
++                    self.agent,
++                    {"tool_call": _Call("unexpected-failure", "api", "{}")},
++                    next_handler,
++                )
++            )
++
+     def setUp(self) -> None:
+         contracts = {
+             name: api.ToolContract(core.ContentOrigin.API_RESPONSE)

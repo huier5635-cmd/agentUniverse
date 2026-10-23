@@ -1,8 +1,0 @@
-name: 'param_converter'
-description:
-tool_type: 'api'
-input_keys: []
-metadata:
-  type: 'TOOL'
-  module: 'peer_agent_app.intelligence.agentic.tool.param_converter'
-  class: 'ParamConverterTool'

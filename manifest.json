@@ -1,0 +1,26 @@
+{
+  "base": "6e47beddfee351d01a5e47f55324605e138005f6",
+  "issue": 4909,
+  "files": [
+    {
+      "path": "src/tokenless/python/agentscope/src/tokenless_agentscope/_v1.py",
+      "original_sha256": "44dbdbaa970b98e87704458bc3873faafce72e30d57817eecd569de9da14fbb3",
+      "fixed_sha256": "07058b5d4ca2e956588c3fdc58114742156d4f080c19c4f70b47c83bf4225d48"
+    },
+    {
+      "path": "src/tokenless/python/agentscope/src/tokenless_agentscope/_v2.py",
+      "original_sha256": "21cbad2a3c1804273d2bed9e8c9386c28a4653e8bc1da6f8541f4bbfe52f6520",
+      "fixed_sha256": "41c2a7e9c962a015dd9edde3eb91ac78b5871aca4d21a4398b7d11d2fca0e4b6"
+    },
+    {
+      "path": "src/tokenless/tests/test_agentscope_v1.py",
+      "original_sha256": "a2e9f8b856491427d5f8c5d9141da09830d9a11ca961017acf5fc599ac5317d7",
+      "fixed_sha256": "8a489d9b100d9b75261c3033e6e99a2fb3227d062f5955b7ac4ff8a790946c35"
+    },
+    {
+      "path": "src/tokenless/tests/test_agentscope_middleware.py",
+      "original_sha256": "67d25c898496d31e4ae8c25b06e46c4ee23a13ad860024e84bce0bdff6abb047",
+      "fixed_sha256": "f725d6fb4acf0b19cba7a1585ad1292a860e86fd158880d063de19a5750a4af6"
+    }
+  ]
+}
