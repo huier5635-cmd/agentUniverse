@@ -1,0 +1,21 @@
+{
+  "base": {
+    "sha": "5351c892f2e89d6be799ebdbeea948c173d3d7c2",
+    "tree": "f96fa05d6d0d232af9c6e15fef25dd472ef608b6",
+    "cosh_tree": "8b6ac615fe9a4781832f9e43f7d4984fe7db7309",
+    "archive_base": "6e47beddfee351d01a5e47f55324605e138005f6",
+    "issue": 8258
+  },
+  "files": [
+    {
+      "path": "src/cosh-ng/crates/cosh-shell/src/runtime/controller/bootstrap.rs",
+      "original_sha256": "4a15e54dd5f4a3e682562673d327b85a140cda2a0c757aba0895f134e48462b3",
+      "candidate_sha256": "124c59e281c04a76897a5dc54027c452162e36dfa1ec3e9834dab2c66fed6d2f"
+    },
+    {
+      "path": "src/cosh-ng/crates/cosh-shell/tests/raw_cli/startup.rs",
+      "original_sha256": "297a17d017ab90970834ce654def0b5aee724d25b1f04ccfedbc342ecb474d33",
+      "candidate_sha256": "e9bd3dd7d29d355b0f02302dc2e9e16de716c12b87e33c1a3965552d2581dd90"
+    }
+  ]
+}

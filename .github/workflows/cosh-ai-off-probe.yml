@@ -1,0 +1,61 @@
+name: Cosh AI-off startup probe validation
+on:
+  push:
+    branches: [ci/cosh-ai-off-probe]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      RUSTUP_TOOLCHAIN: '1.97.1'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_BUILD_JOBS: '2'
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      COSH_RAW_CLI_TEST_PARALLELISM: '4'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: agentic-os-org/ANOLISA
+          ref: 5351c892f2e89d6be799ebdbeea948c173d3d7c2
+          path: official
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: official/src/cosh-ng
+          shared-key: cosh-ai-off-validation
+          cache-bin: false
+          cache-on-failure: true
+      - name: Install isolated runner test dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y pkg-config ripgrep zsh
+      - name: Validate startup policy with real terminal sessions
+        run: python3 .ci/cosh-ai-off/verify.py
+      - name: Publish bounded diagnostics
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          p=pathlib.Path('evidence/summary.json')
+          if p.exists():
+              print('::notice title=Cosh startup verification::'+p.read_text().replace('%','%25').replace('\n','%0A'))
+          else:
+              logs=sorted(pathlib.Path('evidence').glob('*.log'))
+              for p in logs[-5:]:
+                  tail=p.read_text(errors='replace')[-2800:].replace('%','%25').replace('\r','%0D').replace('\n','%0A')
+                  print('::warning title='+p.name+'::'+tail)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cosh-ai-off-startup-evidence
+          path: evidence/
+          if-no-files-found: error
