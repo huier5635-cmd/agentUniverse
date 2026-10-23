@@ -5,13 +5,13 @@
       "path": "docs/user-guide/en/ws-ckpt/index.md",
       "mode": "100644",
       "original_sha256": "33fce3874eb405794941e5d958f2b679018ee18957e33d763809c34c01dd7a64",
-      "candidate_sha256": "fb74bc946b6c052a4c75bf780d85ff2c526406019e2625adcbadc41db58a8d7e"
+      "candidate_sha256": "1db844b06194ed1d4bd5552b60f28bd26b2b324d1c7172059ecdb319d7dbb68d"
     },
     {
       "path": "docs/user-guide/zh/ws-ckpt/index.md",
       "mode": "100644",
       "original_sha256": "5aab69a99b08384e10eb5b591320031906bdf8844990508679eb7d5afec6fdb1",
-      "candidate_sha256": "c4d818a5ac33591104ee91d8620e5dd9929588730d83e6dbf248f88fcafbc83a"
+      "candidate_sha256": "f78ff2df8eb7e89ca263f587b726ea778d7f48ee048a1bb9280cba64d4267dcb"
     },
     {
       "path": "src/ws-ckpt/README.md",

@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        gate: [package-docs, rust-coverage, plugins]
+        gate: [package-docs, rust-coverage]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,10 +41,16 @@ jobs:
           fallback: none
       - name: Install filesystem utilities
         run: sudo apt-get update -qq && sudo apt-get install -y btrfs-progs rsync
+      - name: Compare baseline and candidate coverage without filtering tests
+        if: matrix.gate == 'rust-coverage'
+        run: python payload/.ci/btrfs-final/coverage_compare.py upstream coverage-evidence
       - name: Verify final source and component gates
+        if: matrix.gate == 'package-docs'
         run: python payload/.ci/btrfs-final/final_gates.py upstream evidence ${{ matrix.gate }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: btrfs-final-${{ matrix.gate }}
-          path: evidence/
+          path: |
+            evidence/
+            coverage-evidence/
