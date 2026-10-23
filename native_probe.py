@@ -22,7 +22,16 @@ async def main():
     with tempfile.TemporaryDirectory(prefix="tokenless-stash-lock-") as temporary:
         config = TokenlessConfig(data_dir=temporary, rtk_enabled=False)
         integration = TokenlessAgentScope(config, tool_contracts={"api": ToolContract(ContentOrigin.API_RESPONSE)})
-        payload = json.dumps(list(range(500)))
+        payload = (
+            "<!doctype html><html><head><title>Storage failure audit</title></head>"
+            "<body><main>"
+            + (
+                '<section class="article-body" data-layout="wide">'
+                '<p class="content">Retain this article when the stash is unavailable.</p>'
+                "</section>"
+            ) * 80
+            + "</main></body></html>"
+        )
         if agentscope.__version__.startswith("1."):
             toolkit = integration.create_toolkit()
             agent = SimpleNamespace(name="native-audit", toolkit=toolkit, model=object(), register_instance_hook=lambda *args: None)
@@ -56,6 +65,9 @@ async def main():
         assert text(response) == payload, "input was mutated"
         database = Path(temporary) / "stash.db"
         assert database.is_file()
+        with sqlite3.connect(database) as check:
+            healthy_stash_entries = check.execute("SELECT COUNT(*) FROM stash").fetchone()[0]
+        assert healthy_stash_entries > 0, "healthy control did not exercise the stash backend"
         lock = sqlite3.connect(database, isolation_level=None)
         lock.execute("BEGIN IMMEDIATE")
         error = None
@@ -80,6 +92,7 @@ async def main():
             "native_sdk": True,
             "backend_failure": "real SQLite BEGIN IMMEDIATE write lock",
             "healthy_control_compressed": True,
+            "healthy_stash_entries": healthy_stash_entries,
             "original_mutated": False,
             "core_error": error,
             "original_response_retained": result is response,
