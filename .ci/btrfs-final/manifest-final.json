@@ -1,0 +1,154 @@
+{
+  "base": "5351c892f2e89d6be799ebdbeea948c173d3d7c2",
+  "files": [
+    {
+      "path": "docs/user-guide/en/ws-ckpt/index.md",
+      "mode": "100644",
+      "original_sha256": "33fce3874eb405794941e5d958f2b679018ee18957e33d763809c34c01dd7a64",
+      "candidate_sha256": "fb74bc946b6c052a4c75bf780d85ff2c526406019e2625adcbadc41db58a8d7e"
+    },
+    {
+      "path": "docs/user-guide/zh/ws-ckpt/index.md",
+      "mode": "100644",
+      "original_sha256": "5aab69a99b08384e10eb5b591320031906bdf8844990508679eb7d5afec6fdb1",
+      "candidate_sha256": "c4d818a5ac33591104ee91d8620e5dd9929588730d83e6dbf248f88fcafbc83a"
+    },
+    {
+      "path": "src/ws-ckpt/README.md",
+      "mode": "100644",
+      "original_sha256": "b471481b3c24a87d87086e00ed77e437f01b35a82bf0f52ebf0da79934c52b99",
+      "candidate_sha256": "d29ec53b2a1a2240b8d20f7a959ce2cbcffee5a9a0f9e25811d28c1b92f2aacd"
+    },
+    {
+      "path": "src/ws-ckpt/README_zh.md",
+      "mode": "100644",
+      "original_sha256": "eeecf96031a3819686b454e212e4bb0d9fa813b0934d9b66d2a4d661fda39081",
+      "candidate_sha256": "867c149b8c09e956d7189b9fafa543292fba86ac4f0a3a3664297a5ed8f2de9a"
+    },
+    {
+      "path": "src/ws-ckpt/docs/k8s-sidecar-deploy.md",
+      "mode": "100644",
+      "original_sha256": "0b595f90a41e953528d7e9316b963405c49f8f03d7ff6f67fed01a1ca78122e5",
+      "candidate_sha256": "787740fd3244ba153a3d5bc43a10988a36123ef8fb4e099d29e80d690171bae4"
+    },
+    {
+      "path": "src/ws-ckpt/docs/k8s-sidecar-deploy_zh.md",
+      "mode": "100644",
+      "original_sha256": "f5588b403266fa9283f56c4138da1cd1e608c207c971afbaca0edd314486845f",
+      "candidate_sha256": "38b7cea6bc034582c3aa8682b7e5f4727d824588df8464c391783ff335c6b82c"
+    },
+    {
+      "path": "src/ws-ckpt/docs/ws-ckpt-design.md",
+      "mode": "100644",
+      "original_sha256": "f806feb475ef5fd2b29e944ba72d1e8d53051b775bbab62f309b3818cbb3e304",
+      "candidate_sha256": "10c48844ad8b5d7d745d164c77aa1fd7a12ae0ca54b6ec40bd4f814c39fdf6c3"
+    },
+    {
+      "path": "src/ws-ckpt/src/config.toml.sample",
+      "mode": "100644",
+      "original_sha256": "4e8391fd7aa140d65035fa9394703d7807253932e0b508f71c055c29ed762c2a",
+      "candidate_sha256": "a0fb6b4dd0498020770a63e0ceb488ceab4f0364509f990fc405442d59715bc4"
+    },
+    {
+      "path": "src/ws-ckpt/src/crates/cli/src/main.rs",
+      "mode": "100644",
+      "original_sha256": "b6cf60068f9b8556d74532a8127ef0ec371cc2aa42937141748d50d71a0329b6",
+      "candidate_sha256": "9e5f5fc6dd04cddefbdaa448c833fa0820546585413c90a0a0f6dc0c0bf408e4"
+    },
+    {
+      "path": "src/ws-ckpt/src/crates/common/src/lib.rs",
+      "mode": "100644",
+      "original_sha256": "8c3126ef0ebed57bfed0b127ad70e7b7b6bd2cf68779328311669b7bbe9b2704",
+      "candidate_sha256": "01d56e697177a2bbfb97109859b859b7b560551dc5d0440f70ecfc9a7be48b5d"
+    },
+    {
+      "path": "src/ws-ckpt/src/crates/common/tests/btrfs_config.rs",
+      "mode": "100644",
+      "original_sha256": null,
+      "candidate_sha256": "f2b608a2b976d9cce09b249246baf517423be7af82e09c28d43b29ba8f9fe5fc"
+    },
+    {
+      "path": "src/ws-ckpt/src/crates/daemon/src/backend_detect.rs",
+      "mode": "100644",
+      "original_sha256": "888c4cdceb80d5f9ffa9ee6ffe3836b338ab7fd020f1bed102eb5212394cbe8a",
+      "candidate_sha256": "69382f92ee5af07ffe8c5fe98bc04a901992a6511c2a15dae7e1f736d92ca371"
+    },
+    {
+      "path": "src/ws-ckpt/src/crates/daemon/src/backends/btrfs_base.rs",
+      "mode": "100644",
+      "original_sha256": "7fff9180e49440512c906fa69fb97c8b0b0f02be48a6970796fb0ec2aeb590fc",
+      "candidate_sha256": "18dec50a4a4fdf71e75655963ed29ec355bf7fa1033a21652e27b8aae32764f9"
+    },
+    {
+      "path": "src/ws-ckpt/src/crates/daemon/src/backends/btrfs_common.rs",
+      "mode": "100644",
+      "original_sha256": "f9915ee431402c325044a0a4850cffbc833eba685d9b5a4bb9e6f8418e26bb7d",
+      "candidate_sha256": "d965180b0e8ed9d5575eac5fbbf1dac08081f0d30494964804df7704dd636413"
+    },
+    {
+      "path": "src/ws-ckpt/src/crates/daemon/src/dispatcher.rs",
+      "mode": "100644",
+      "original_sha256": "89def706afbbd5a2ebe26fa87bdf30fb9975731a44b5b8409da3d7668fd79e3a",
+      "candidate_sha256": "0a85cc623bc846e1f357c8fe0fae30f799ffd8ba303cf7f17aa8904b62ebd8bb"
+    },
+    {
+      "path": "src/ws-ckpt/src/crates/daemon/src/snapshot_mgr.rs",
+      "mode": "100644",
+      "original_sha256": "c1ad7b2ba3cade49900447c6118c0ab791257291654fb378a31554b18416b4c9",
+      "candidate_sha256": "2b4057e75055e8da3b7d557ff275ec022cb9ad8a87ebee7e4cf17d2954bb99b3"
+    },
+    {
+      "path": "src/ws-ckpt/src/crates/daemon/src/startup.rs",
+      "mode": "100644",
+      "original_sha256": "00b6a642c0618d42df340504a87f066957dbc5baadae0fb5ca76758756fbe30e",
+      "candidate_sha256": "f4a7dd84c04eb0512c2c6b8d02951fc7039026e870b83366d62343f469de3ccd"
+    },
+    {
+      "path": "src/ws-ckpt/src/crates/daemon/src/startup/native_btrfs_config_tests.rs",
+      "mode": "100644",
+      "original_sha256": null,
+      "candidate_sha256": "6f5917df66fe2109eb810995d200aef2f8c73f0e13085da9aab564f6d88cd808"
+    },
+    {
+      "path": "src/ws-ckpt/src/crates/daemon/src/startup/native_btrfs_tests.rs",
+      "mode": "100644",
+      "original_sha256": null,
+      "candidate_sha256": "edea0c97a5a6057c9a54b07ac571ef82d637ed53e1e256764eb9fd55d0fa58bc"
+    },
+    {
+      "path": "src/ws-ckpt/src/crates/daemon/src/state.rs",
+      "mode": "100644",
+      "original_sha256": "cdb5bc6b9d2f33bdfdc252ef072681b939eca4aef13dca5e8345473740bd968c",
+      "candidate_sha256": "0e043ec03bb27e310e23dcd6649cb6c6b7aa933d2fed2ed9fe31bdf0a347d932"
+    },
+    {
+      "path": "src/ws-ckpt/src/crates/daemon/src/workspace_mgr.rs",
+      "mode": "100644",
+      "original_sha256": "e3d292d8df060d8e420d5f1156537972729aee62cb18fde227d48117566c3558",
+      "candidate_sha256": "a812664f76b9fe7d02440efeda79e90f5a19d0deda3f28f83c237598dc6e5e7e"
+    },
+    {
+      "path": "src/ws-ckpt/src/crates/daemon/tests/diff_tmp_storage.rs",
+      "mode": "100644",
+      "original_sha256": "1b3f1771ec70c88a92d03c1b1fccaff4fa2b5b45e0dee87508751d00877149bf",
+      "candidate_sha256": "38b0e6c64524823ee564cc702a10d10af73edf688543a2ea69cba3ac33131742"
+    }
+  ],
+  "native_validated_rust_hashes": {
+    "src/ws-ckpt/src/crates/cli/src/main.rs": "9e5f5fc6dd04cddefbdaa448c833fa0820546585413c90a0a0f6dc0c0bf408e4",
+    "src/ws-ckpt/src/crates/common/src/lib.rs": "01d56e697177a2bbfb97109859b859b7b560551dc5d0440f70ecfc9a7be48b5d",
+    "src/ws-ckpt/src/crates/common/tests/btrfs_config.rs": "f2b608a2b976d9cce09b249246baf517423be7af82e09c28d43b29ba8f9fe5fc",
+    "src/ws-ckpt/src/crates/daemon/src/backend_detect.rs": "69382f92ee5af07ffe8c5fe98bc04a901992a6511c2a15dae7e1f736d92ca371",
+    "src/ws-ckpt/src/crates/daemon/src/backends/btrfs_base.rs": "18dec50a4a4fdf71e75655963ed29ec355bf7fa1033a21652e27b8aae32764f9",
+    "src/ws-ckpt/src/crates/daemon/src/backends/btrfs_common.rs": "d965180b0e8ed9d5575eac5fbbf1dac08081f0d30494964804df7704dd636413",
+    "src/ws-ckpt/src/crates/daemon/src/dispatcher.rs": "0a85cc623bc846e1f357c8fe0fae30f799ffd8ba303cf7f17aa8904b62ebd8bb",
+    "src/ws-ckpt/src/crates/daemon/src/snapshot_mgr.rs": "2b4057e75055e8da3b7d557ff275ec022cb9ad8a87ebee7e4cf17d2954bb99b3",
+    "src/ws-ckpt/src/crates/daemon/src/startup/native_btrfs_config_tests.rs": "6f5917df66fe2109eb810995d200aef2f8c73f0e13085da9aab564f6d88cd808",
+    "src/ws-ckpt/src/crates/daemon/src/startup/native_btrfs_tests.rs": "edea0c97a5a6057c9a54b07ac571ef82d637ed53e1e256764eb9fd55d0fa58bc",
+    "src/ws-ckpt/src/crates/daemon/src/startup.rs": "f4a7dd84c04eb0512c2c6b8d02951fc7039026e870b83366d62343f469de3ccd",
+    "src/ws-ckpt/src/crates/daemon/src/state.rs": "0e043ec03bb27e310e23dcd6649cb6c6b7aa933d2fed2ed9fe31bdf0a347d932",
+    "src/ws-ckpt/src/crates/daemon/src/workspace_mgr.rs": "a812664f76b9fe7d02440efeda79e90f5a19d0deda3f28f83c237598dc6e5e7e",
+    "src/ws-ckpt/src/crates/daemon/tests/diff_tmp_storage.rs": "38b0e6c64524823ee564cc702a10d10af73edf688543a2ea69cba3ac33131742"
+  },
+  "native_rust_validation_run": 39973929356
+}

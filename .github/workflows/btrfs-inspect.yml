@@ -1,13 +1,17 @@
-name: Inspect Btrfs mount restoration implementation
+name: Btrfs mount final source gates
 on:
   push:
     branches: [ci/ckpt-btrfs-mount-wip-20261023]
 permissions:
   contents: read
 jobs:
-  check:
+  gates:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        gate: [package-docs, rust-coverage, plugins]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -19,16 +23,28 @@ jobs:
           path: upstream
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
-          components: rustfmt, clippy
+          components: rustfmt
       - uses: Swatinem/rust-cache@v2
+        if: matrix.gate == 'rust-coverage'
         with:
           workspaces: upstream/src/ws-ckpt/src
-      - name: Install native filesystem fixtures
-        run: sudo apt-get update -qq && sudo apt-get install -y btrfs-progs rsync dmsetup
-      - name: Compile and validate native restart policies
-        run: python3 payload/.ci/btrfs-native/validate_btrfs.py upstream evidence
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11.6'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: taiki-e/install-action@v2
+        if: matrix.gate == 'rust-coverage'
+        with:
+          tool: cargo-tarpaulin@0.37.2
+          fallback: none
+      - name: Install filesystem utilities
+        run: sudo apt-get update -qq && sudo apt-get install -y btrfs-progs rsync
+      - name: Verify final source and component gates
+        run: python payload/.ci/btrfs-final/final_gates.py upstream evidence ${{ matrix.gate }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: btrfs-implementation-inspection
+          name: btrfs-final-${{ matrix.gate }}
           path: evidence/
