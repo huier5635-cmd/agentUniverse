@@ -1,0 +1,45 @@
+name: AgentSight Tokenless mode coverage
+on:
+  push:
+    branches: [ci/sight-tokenless-mode-test]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_BUILD_JOBS: '2'
+      RUSTUP_TOOLCHAIN: '1.89.0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: agentic-os-org/ANOLISA
+          ref: 5351c892f2e89d6be799ebdbeea948c173d3d7c2
+          path: official
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: official/src/agentsight
+          shared-key: sight-dsh-status-gates
+          cache-on-failure: true
+      - name: Install native build dependencies in disposable runner
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y clang llvm libclang-dev libbpf-dev libelf-dev elfutils libssl-dev zlib1g-dev pkg-config perl
+      - name: Check the candidate and old-filter mutation
+        run: python3 .ci/sight-tokenless-mode-test/verify.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sight-tokenless-mode-evidence
+          path: evidence/
+          if-no-files-found: error

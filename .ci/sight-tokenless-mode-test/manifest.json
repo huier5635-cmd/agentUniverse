@@ -1,0 +1,16 @@
+{
+  "base": "5351c892f2e89d6be799ebdbeea948c173d3d7c2",
+  "relatesToCommit": "7d1b0da9783dfe47ff1fc46e76335c1d5f8f89e5",
+  "sourceFile": "src/agentsight/src/storage/sqlite/genai/tokenless.rs",
+  "originalBlob": "aa617794b12c3e9cb5fbf0224482ee25af30e1c2",
+  "fixedBlob": "8d9440ef70ddaa5a9541928f639fa5623c81037e",
+  "originalSHA256": "f738a4713c9d62b3872572935f10eb3da7f37de4bc4364a1b824d5c66cfe993e",
+  "fixedSHA256": "b1cc551b7b3a9f6ea0426409d9183f2f297fc07b09703bfc7dce8636498a67f8",
+  "productionSHA256": "3c837f47586be3f4b92b13b3ebbd328e6a9a7a6bdf00c992457e4a49be9e69ee",
+  "fixtureModes": 9,
+  "includedModes": 5,
+  "productionCodeChanged": false,
+  "sourceTree": "5f1aa1c2068e63ba16287e1574c7a016a06cb39f",
+  "pristineBaselineRun": 39949157918,
+  "pristineBaselineArtifactSHA256": "d291b762d8dad0963252088ac469a493194153cec66dfa35bb231840981d78fe"
+}
