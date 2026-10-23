@@ -62,6 +62,16 @@ else:
         assert test in library_log, test
     summary["knownFailure"] = failures[0]
     summary["knownFailureEvidenceRun"] = manifest["knownLinuxFailureEvidenceRun"]
+if mode == "linux":
+    summary["linuxIntegrationTests"] = {}
+    for target in ["atif_timestamp_precision", "bpf_load", "cli_contract", "enforcement_pipeline", "http_memory", "memory_storage", "non_sse_response_fragments", "pipeline"]:
+        test_code, test_log = run("integration-" + target, ["cargo", "test", *options, "--test", target, "--", "--test-threads=2"])
+        assert test_code == 0 and "test result: ok." in test_log, test_log[-6000:]
+        counts = re.search(r"test result: ok\. (\d+) passed; 0 failed; (\d+) ignored", test_log)
+        assert counts and (int(counts.group(1)) > 0 or (target == "bpf_load" and int(counts.group(2)) > 0)), target
+        summary["linuxIntegrationTests"][target] = {"passed": int(counts.group(1)), "ignored": int(counts.group(2))}
+    bench_code, bench_log = run("linux-benchmark-link", ["cargo", "test", *options, "--bench", "pipeline", "--no-run"])
+    assert bench_code == 0, bench_log[-6000:]
 clippy = ["cargo", "clippy", "--locked", "--workspace", "--all-targets", "--", "-D", "warnings"] if mode == "linux" else ["cargo", "clippy", *options, "--all-targets", "--", "-D", "warnings"]
 code, log = run("clippy", clippy)
 assert code == 0, log[-6000:]

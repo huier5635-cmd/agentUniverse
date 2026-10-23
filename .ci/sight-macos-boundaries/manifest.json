@@ -2,6 +2,12 @@
   "base": "5351c892f2e89d6be799ebdbeea948c173d3d7c2",
   "files": [
     {
+      "path": "src/agentsight/benches/pipeline.rs",
+      "mode": "100644",
+      "originalSHA256": "45dac986bbfe78bdc89589a4fc269f4b8f22d9ab773341dc4d69569d0afdc7af",
+      "unformattedSHA256": "a4d2cef6e699c7954a8968420ec3cfe80489eedbcad5418d0194bbfc5ebdf9ce"
+    },
+    {
       "path": "src/agentsight/src/bin/cli/mod.rs",
       "mode": "100644",
       "originalSHA256": "a9082f1c50f58027fb26c563e3930e21fa02d0edf3d7e7c98e944846b77585d9",
@@ -30,6 +36,54 @@
       "mode": "100644",
       "originalSHA256": "8dfe4515be714d0233339b8b1a509cda72fa09df0d847f2398d46ad3a320a8db",
       "unformattedSHA256": "5633c3c601e448d831126fed3f37697b553872f7ef26f75491e28a0ad3bd8765"
+    },
+    {
+      "path": "src/agentsight/tests/atif_timestamp_precision.rs",
+      "mode": "100644",
+      "originalSHA256": "f3aabcbe272e66a28e5a6200b9ba15587dc21fe29bb923c6bd32e0687a988b6d",
+      "unformattedSHA256": "22bcefcd86af7c9fcf3f413496a0f7112bd2d013b630086e02682a7720512997"
+    },
+    {
+      "path": "src/agentsight/tests/bpf_load.rs",
+      "mode": "100644",
+      "originalSHA256": "5929148ef956f6271725b0c46d4c40097e8da474332b122f354fd4b14de7744a",
+      "unformattedSHA256": "ee3a7071b48df38ec994355a85ce171997006a90a1191f8860235c0e871946e8"
+    },
+    {
+      "path": "src/agentsight/tests/cli_contract.rs",
+      "mode": "100644",
+      "originalSHA256": "10975364cd99719a7a74469b93bbde028fdf9fadfdf86ffd71de54e195447ee9",
+      "unformattedSHA256": "dc813a1317ad0203b8d32c20ffebe1b862babce68c6dccf8a76b5e0452ac9f5a"
+    },
+    {
+      "path": "src/agentsight/tests/enforcement_pipeline.rs",
+      "mode": "100644",
+      "originalSHA256": "4f17805e4ec81b9c11cb3cf6cf9cbac0d1d7a1b41c5ca12c7ac48fe802a76366",
+      "unformattedSHA256": "89678d61b5b7a844310ed00499c4c5667a6580791927c24bb0463c124c004600"
+    },
+    {
+      "path": "src/agentsight/tests/http_memory.rs",
+      "mode": "100644",
+      "originalSHA256": "05d62a787a65c90e3d3237019daa4dfa5553815890850b02e34676bee61eb274",
+      "unformattedSHA256": "3d88c245d1a2b45b8a9cfcedf5f87caee8ed9b7193146bdf4f3790b1df2164ad"
+    },
+    {
+      "path": "src/agentsight/tests/memory_storage.rs",
+      "mode": "100644",
+      "originalSHA256": "06199d4fa0be32f3bf8690266ee64c2d548ff9cd382010f248f2d6b20ffb24ca",
+      "unformattedSHA256": "1a43733790293180748a635b7f515976094960611a932e1dc3323d165366a144"
+    },
+    {
+      "path": "src/agentsight/tests/non_sse_response_fragments.rs",
+      "mode": "100644",
+      "originalSHA256": "78e4e220e33f6fb8c8c22279dfa083dfb08e125d219747e2ec6819b903446d2c",
+      "unformattedSHA256": "c9204563afb2f0a53037c4a28a6fcdf600c138af4f93dcb6571112560c54ff7c"
+    },
+    {
+      "path": "src/agentsight/tests/pipeline.rs",
+      "mode": "100644",
+      "originalSHA256": "81b3f5ede21f2836059004778b3bc6b59ad1449382288056d768b08dc3a977d7",
+      "unformattedSHA256": "31530f0de7a5c63cfeaa79679cba640cb8b27b4e593330377096a107fa004710"
     }
   ],
   "sourcePublished": false,
