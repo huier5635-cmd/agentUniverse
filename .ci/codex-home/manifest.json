@@ -1,0 +1,44 @@
+{
+  "base": "5351c892f2e89d6be799ebdbeea948c173d3d7c2",
+  "issue": 8812,
+  "sourcePublished": false,
+  "common": "src/tokenless/adapters/tokenless/codex/scripts/_common.sh",
+  "detect": "src/tokenless/adapters/tokenless/codex/scripts/detect.sh",
+  "discoverySources": [
+    "src/tokenless/adapters/tokenless/codex/scripts/_common.sh",
+    "src/tokenless/adapters/tokenless/codex/scripts/detect.sh"
+  ],
+  "test": "src/tokenless/tests/test-codex-adapter-install.sh",
+  "files": [
+    {
+      "path": "docs/user-guide/en/tokenless/framework-integration.md",
+      "mode": "100644",
+      "originalSHA256": "dfa3e46a96a77a539213aa8d148a6ae854ad1aa9ff7acda04695035e884ab5ac",
+      "fixedSHA256": "ea92ee64d4e0c80c740d07a7401b1de386814e27e6501dcd664b6b01e27cf5a3"
+    },
+    {
+      "path": "docs/user-guide/zh/tokenless/framework-integration.md",
+      "mode": "100644",
+      "originalSHA256": "76915b2d312b6f10f0b259b754802feabae150ece14d192d23689e2ee8600c7e",
+      "fixedSHA256": "e3ebe1ece12ea1de636e7ca667cdc945673efa34c671d02adfa552c1903b5f0b"
+    },
+    {
+      "path": "src/tokenless/adapters/tokenless/codex/scripts/_common.sh",
+      "mode": "100755",
+      "originalSHA256": "33de3ec801974b3d27bea06250c6cd3c28c81c187d0ba08f2c82000284cacaac",
+      "fixedSHA256": "1a1bee7a4d88ae2d4e9d25d08d1a403fbb044cddc2007bae671fd4dfe70135d0"
+    },
+    {
+      "path": "src/tokenless/adapters/tokenless/codex/scripts/detect.sh",
+      "mode": "100755",
+      "originalSHA256": "2111676f62bcfa6b622cdc68fc05051ff9e31363603faccfa2ef9ae59c4e05dc",
+      "fixedSHA256": "c2c3cae8a2574dacf056dae5ed65ad61bfd2516fbc631f3f005f21378bfa5ad7"
+    },
+    {
+      "path": "src/tokenless/tests/test-codex-adapter-install.sh",
+      "mode": "100755",
+      "originalSHA256": "9191cf10d32b5badb60914103a581274b90621c2390504574bd5e0370653462b",
+      "fixedSHA256": "b959f026f10d83c00059e6bed40930b13c8647c16dae1866c7c1339d92c27975"
+    }
+  ]
+}

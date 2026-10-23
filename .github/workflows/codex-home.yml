@@ -1,0 +1,54 @@
+name: Codex absolute HOME discovery validation
+on:
+  push:
+    branches: [ci/codex-absolute-home-20261023]
+permissions:
+  contents: read
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            python: '3.8.18'
+            full: '0'
+          - os: ubuntu-24.04
+            python: '3.11.6'
+            full: '1'
+          - os: macos-14
+            python: '3.11'
+            full: '0'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      FULL_ADAPTER_GATES: ${{ matrix.full }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: agentic-os-org/ANOLISA
+          ref: 5351c892f2e89d6be799ebdbeea948c173d3d7c2
+          path: upstream
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Record runtime versions
+        shell: bash
+        run: |
+          mkdir -p evidence
+          { python --version; node --version; bash --version; git -C upstream rev-parse HEAD; } > evidence/environment.txt
+      - name: Reproduce unsafe selection and validate discovery
+        run: python .ci/codex-home/validate.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: codex-home-${{ matrix.os }}-${{ matrix.python }}
+          path: evidence/
+          if-no-files-found: error
