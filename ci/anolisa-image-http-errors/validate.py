@@ -52,7 +52,11 @@ head, _ = command("upstream-head", ["git", "rev-parse", "HEAD"], UPSTREAM)
 assert head.stdout.strip() == MANIFEST["base"]
 original = (UPSTREAM / SOURCE).read_bytes()
 assert hashlib.sha256(original).hexdigest() == MANIFEST["files"][0]["original_sha256"]
-scratch_tests("original", original, (PAYLOAD / "original-test.py").read_bytes(), "FAILED (failures=14)")
+if sys.version_info >= (3, 11):
+    scratch_tests("original", original, (PAYLOAD / "original-test.py").read_bytes(), "FAILED (failures=14)")
+else:
+    # The former test syntax is itself incompatible with Python3.8.
+    scratch_tests("original", original)
 scratch_tests("previous-review-head", (PAYLOAD / "previous.py").read_bytes())
 
 command("patch-check", ["git", "apply", "--check", str(PAYLOAD / "candidate.patch")], UPSTREAM)
@@ -132,7 +136,7 @@ SUMMARY.update(
         "base": MANIFEST["base"],
         "sourceTree": tree.stdout.strip(),
         "fixedMethods": 12,
-        "originalFailures": 14,
+        "originalFailures": int(re.search(r"failures=(\d+)", SUMMARY["original"]).group(1)),
         "remoteModelCalls": 0,
         "scope": "urllib mocks plus real loopback HTTP; no paid generation or full monorepo suite",
         "formatterScope": MANIFEST["formatterScope"],
