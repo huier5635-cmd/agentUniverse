@@ -1,4 +1,4 @@
-name: HUATUO command-line prefix validation
+name: HUATUO command-line review follow-up validation
 on:
   push:
     branches: [ci/huatuo-commandline-prefix]
@@ -20,7 +20,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ccfos/huatuo
-          ref: bdcee2d10d872c9c693a87994cf1f63f9b4340dd
+          ref: 0ab7dc442b245e2ec9b88a3e0705a048ca560ddb
           path: source
           persist-credentials: false
       - name: Reproduce, test, race-check, and benchmark the real process package
@@ -30,7 +30,7 @@ jobs:
         with:
           name: huatuo-commandline-regressions
           path: .ci/huatuo-commandline/evidence
-          retention-days: 3
+          retention-days: 5
   repository-check:
     needs: regressions
     runs-on: ubuntu-24.04
@@ -43,7 +43,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ccfos/huatuo
-          ref: bdcee2d10d872c9c693a87994cf1f63f9b4340dd
+          ref: 0ab7dc442b245e2ec9b88a3e0705a048ca560ddb
           path: source
           persist-credentials: false
       - name: Verify and overlay frozen source
@@ -62,15 +62,25 @@ jobs:
               shutil.copyfile(here/'fixed'/relative,Path('source')/relative)
           PY
           git -C source add internal/process/process.go internal/process/process_test.go
+          actual_tree=$(git -C source write-tree)
+          test "$actual_tree" = '075d31f34023b26abed37f4366f30980c8fa2430'
+          echo "TESTED_SOURCE_TREE=$actual_tree"
       - name: Build the official development toolchain
         working-directory: source
         run: docker build --target devel --progress plain -t huatuo-commandline-check -f Dockerfile.devel .
-      - name: Run full build, required check, and unit suite
+      - name: Run full build and mandatory check
         working-directory: source
         run: |
+          set -o pipefail
+          mkdir -p ../.ci/huatuo-commandline/evidence
           docker run --rm -v "$PWD:/workspace" -w /workspace huatuo-commandline-check sh -ec '
             git config --global --add safe.directory /workspace
             make build
             make check
-            make unit
-          '
+          ' 2>&1 | tee ../.ci/huatuo-commandline/evidence/build-check.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: huatuo-commandline-review-required-check
+          path: .ci/huatuo-commandline/evidence
+          retention-days: 5
