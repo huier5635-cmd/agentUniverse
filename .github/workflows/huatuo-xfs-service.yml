@@ -18,6 +18,11 @@ jobs:
           fetch-depth: 2
           path: source
           persist-credentials: false
+      - name: Load host kernel filesystem modules before starting the service
+        run: |
+          sudo modprobe xfs
+          sudo modprobe loop
+          grep -qw xfs /proc/filesystems
       - name: Build the repository development toolchain
         run: docker build --target devel --progress plain -t huatuo-xfs-service -f source/Dockerfile.devel source
       - name: Validate original and fixed service output through the standard runner
