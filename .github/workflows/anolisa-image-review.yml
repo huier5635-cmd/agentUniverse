@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.8.20', '3.11.6']
+        python: ['3.8.18']
     steps:
       - uses: actions/checkout@v4
         with:
