@@ -1,0 +1,21 @@
+{
+  "base": "bdcee2d10d872c9c693a87994cf1f63f9b4340dd",
+  "old_head": "f1b141432275429cb094ce6e5381dc0ec7703225",
+  "files": {
+    "core/metrics/xfs.go": {
+      "sha256": "ca804a2a6fec1fbc382dfd8a49521ca6acc9fda797b6c92f107e9335b6bb832c",
+      "blob": "cdfa799a7f730fdd12d4810becd3c6bbfd932e8b",
+      "mode": "100644"
+    },
+    "core/metrics/xfs_test.go": {
+      "sha256": "4300e8b475446c5c3cd69ecbfc071542738a6af7793f1186f760413e1498add4",
+      "blob": "67ba57f59375b54501308b67ad2848327ffd1cbc",
+      "mode": "100644"
+    },
+    "integration/test_metrics_xfs_hotplug.sh": {
+      "sha256": "8b9b94d8b6494effd9dbfe5360764072104cc1f957f13d8360fc466cb08b1a68",
+      "blob": "29c4aa3eb18892de42320a37256139990e39d223",
+      "mode": "100755"
+    }
+  }
+}
