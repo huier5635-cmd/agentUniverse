@@ -4,6 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 import sqlite3
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -71,9 +72,21 @@ async def main():
         assert healthy_stash_entries > 0, "healthy control did not exercise the stash backend"
         # Use a fast backend/migration failure, separately from the pipeline
         # deadline that can affect a long-running writer-lock experiment.
-        with sqlite3.connect(database) as change:
-            change.execute("ALTER TABLE stash RENAME TO unavailable_stash")
-        change.close()
+        def change_schema(statement):
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); "
+                    "db.execute(sys.argv[2]); db.commit(); db.close()",
+                    str(database),
+                    statement,
+                ],
+                check=True,
+                timeout=15,
+            )
+
+        change_schema("ALTER TABLE stash RENAME TO unavailable_stash")
         error = None
         result = None
         try:
@@ -81,9 +94,7 @@ async def main():
         except TokenlessError as failure:
             error = str(failure)
         finally:
-            with sqlite3.connect(database) as restore:
-                restore.execute("ALTER TABLE unavailable_stash RENAME TO stash")
-            restore.close()
+            change_schema("ALTER TABLE unavailable_stash RENAME TO stash")
         observation = {
             "mode": MODE,
             "agentscope": agentscope.__version__,
