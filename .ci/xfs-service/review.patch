@@ -1,16 +1,14 @@
 --- a/core/metrics/xfs_test.go
 +++ b/core/metrics/xfs_test.go
-@@ -19,9 +19,7 @@
+@@ -19,7 +19,6 @@
  	"encoding/binary"
  	"fmt"
  	"os"
 -	"os/exec"
  	"path/filepath"
--	"strings"
+ 	"strings"
  	"sync"
- 	"testing"
- 
-@@ -384,56 +382,3 @@
+@@ -384,56 +383,3 @@
  		})
  	}
  }

@@ -8,8 +8,8 @@
       "mode": "100644"
     },
     "core/metrics/xfs_test.go": {
-      "sha256": "4300e8b475446c5c3cd69ecbfc071542738a6af7793f1186f760413e1498add4",
-      "blob": "67ba57f59375b54501308b67ad2848327ffd1cbc",
+      "sha256": "d3108df9e4b346bc939c91ff122f08c267408db8f06510c419d3a97c653df2c6",
+      "blob": "c51ced7e932301b49ac9838ce91873e6c433f8b9",
       "mode": "100644"
     },
     "integration/test_metrics_xfs_hotplug.sh": {

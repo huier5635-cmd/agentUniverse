@@ -50,19 +50,20 @@ jobs:
           summary=logs/'summary.json'
           if summary.exists():
               message=summary.read_text()
-              kind='notice'
+              messages=[('notice','XFS verification',message)]
           else:
               paths=sorted(logs.glob('*.log'),key=lambda p:p.stat().st_mtime)
-              parts=[]
-              for path in paths[-3:]:
-                  parts.append(path.name+'\n'+path.read_text(errors='replace')[-5500:])
+              messages=[]
               focused=logs/'fixed-focused.jsonl'
               if focused.exists():
-                  parts.append(focused.name+'\n'+focused.read_text(errors='replace')[-5500:])
-              message='\n\n'.join(parts)[-18000:] or 'Validation did not produce test logs; inspect preceding setup step.'
-              kind='error'
-          message=message.replace('%','%25').replace('\r','%0D').replace('\n','%0A')
-          print('::'+kind+' title=XFS verification::'+message)
+                  messages.append(('error','XFS focused tests',focused.read_text(errors='replace')[-3000:]))
+              for path in paths[-3:]:
+                  messages.append(('error','XFS '+path.name,path.read_text(errors='replace')[-3000:]))
+              if not messages:
+                  messages=[('error','XFS verification','Validation did not produce test logs; inspect preceding setup step.')]
+          for kind,title,message in messages:
+              message=message.replace('%','%25').replace('\r','%0D').replace('\n','%0A')
+              print('::'+kind+' title='+title+'::'+message)
           PY
       - uses: actions/upload-artifact@v4
         if: always()
