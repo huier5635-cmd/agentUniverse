@@ -1,0 +1,599 @@
+--- a/src/tokenless/python/agentscope/src/tokenless_agentscope/_v1.py
++++ b/src/tokenless/python/agentscope/src/tokenless_agentscope/_v1.py
+@@ -5,6 +5,7 @@
+ import copy
+ import inspect
+ import json
++import logging
+ from collections.abc import Mapping
+ from dataclasses import replace
+ from typing import Any
+@@ -34,6 +35,9 @@
+     build_tool_contracts,
+     retrieve_tool_declaration,
+ )
++
++
++logger = logging.getLogger(__name__)
+ 
+ 
+ class _TokenlessToolkit(Toolkit):
+@@ -150,6 +154,7 @@
+     ) -> None:
+         self.config = config or TokenlessConfig()
+         self.sdk = TokenlessSdk(self.config)
++        self._post_tool_failures = 0
+         self._tool_contracts = build_tool_contracts(tool_contracts)
+         self._retrieve_declaration = retrieve_tool_declaration(self.config.retrieve_tool_name)
+         self._installed_agent: Any | None = None
+@@ -237,6 +242,8 @@
+         if not response.is_last:
+             return response
+         contract = self.contract_for(tool_call["name"])
++        attribution = self._attribution(tool_call["id"])
++        status = self._status(response)
+         optimization = toolkit.output_optimizations.pop(tool_call["id"], OutputOptimization.NONE)
+         command = None
+         if contract.command_field is not None:
+@@ -246,28 +253,41 @@
+         for index, block in enumerate(response.content):
+             if block.get("type") != "text":
+                 continue
+-            transformed = await self.sdk.post_tool(
+-                PostToolRequest(
+-                    result_kind=ResultKind.TOOL,
+-                    tool_name=tool_call["name"],
+-                    content=block.get("text", ""),
+-                    status=self._status(response),
+-                    content_origin=contract.content_origin,
+-                    output_optimization=optimization,
+-                    capabilities=PostToolCapabilities(
+-                        replace_output=True,
+-                        recovery=(
+-                            RecoveryMethod.tool(self.config.retrieve_tool_name)
+-                            if self._status(response) == ToolResultStatus.SUCCESS
+-                            and optimization == OutputOptimization.NONE
+-                            else RecoveryMethod()
++            try:
++                transformed = await self.sdk.post_tool(
++                    PostToolRequest(
++                        result_kind=ResultKind.TOOL,
++                        tool_name=tool_call["name"],
++                        content=block.get("text", ""),
++                        status=status,
++                        content_origin=contract.content_origin,
++                        output_optimization=optimization,
++                        capabilities=PostToolCapabilities(
++                            replace_output=True,
++                            recovery=(
++                                RecoveryMethod.tool(self.config.retrieve_tool_name)
++                                if status == ToolResultStatus.SUCCESS
++                                and optimization == OutputOptimization.NONE
++                                else RecoveryMethod()
++                            ),
++                            replace_with_text=True,
+                         ),
+-                        replace_with_text=True,
+-                    ),
+-                    attribution=self._attribution(tool_call["id"]),
+-                    command=command if isinstance(command, str) else None,
+-                )
+-            )
++                        attribution=attribution,
++                        command=command if isinstance(command, str) else None,
++                    )
++                )
++            except Exception:
++                # SDK/version failures cannot abort completed host tool calls.
++                # Earlier stash writes remain unreferenced: no partial markers escape.
++                self._post_tool_failures += 1
++                logger.exception(
++                    "tokenless: post_tool failed for %s; preserving original result "
++                    "(failures=%d, tool_use_id=%r)",
++                    tool_call["name"],
++                    self._post_tool_failures,
++                    attribution.tool_use_id,
++                )
++                return response
+             extra_context = extra_context or transformed.additional_context
+             if transformed.output != block.get("text", ""):
+                 replacements[index] = TextBlock(type="text", text=transformed.output)
+--- a/src/tokenless/python/agentscope/src/tokenless_agentscope/_v2.py
++++ b/src/tokenless/python/agentscope/src/tokenless_agentscope/_v2.py
+@@ -4,6 +4,7 @@
+ 
+ import hashlib
+ import json
++import logging
+ import os
+ from collections.abc import AsyncGenerator, Callable, Mapping
+ from dataclasses import replace
+@@ -40,6 +41,8 @@
+     retrieve_tool_declaration,
+ )
+ 
++logger = logging.getLogger(__name__)
++
+ _STATE_KEY = "anolisa_tokenless"
+ 
+ 
+@@ -177,6 +180,7 @@
+         self.retrieve_tool_name = config.retrieve_tool_name
+         self._tool_contracts = build_tool_contracts(tool_contracts)
+         self.sdk = TokenlessSdk(config)
++        self._post_tool_failures = 0
+         self._session_markers: dict[str, frozenset[str]] = {}
+         self._session_agents: dict[str, str] = {}
+         self._retrieve_declaration = retrieve_tool_declaration(self.retrieve_tool_name)
+@@ -271,9 +275,7 @@
+         try:
+             arguments = json.loads(source.input)
+             if not isinstance(arguments, dict):
+-                raise TypeError(
+-                    "AgentScope tool input must decode to a JSON object"
+-                )
++                raise TypeError("AgentScope tool input must decode to a JSON object")
+         except (json.JSONDecodeError, TypeError):
+             # AgentScope repairs malformed tool arguments upstream, but the
+             # raw string still reaches the middleware. Raising here kills
+@@ -345,33 +347,47 @@
+         attribution: Attribution,
+         command: str | None,
+     ) -> ToolResponse:
++        status = self._status(response.state)
+         replacements: dict[int, TextBlock] = {}
+         extra_context: str | None = None
+         for index, block in enumerate(response.content):
+             if not isinstance(block, TextBlock):
+                 continue
+-            transformed = await self.sdk.post_tool(
+-                PostToolRequest(
+-                    result_kind=ResultKind.TOOL,
+-                    tool_name=tool_name,
+-                    content=block.text,
+-                    status=self._status(response.state),
+-                    content_origin=contract.content_origin,
+-                    output_optimization=optimization,
+-                    capabilities=PostToolCapabilities(
+-                        replace_output=True,
+-                        recovery=(
+-                            RecoveryMethod.tool(self.retrieve_tool_name)
+-                            if self._status(response.state) == ToolResultStatus.SUCCESS
+-                            and optimization == OutputOptimization.NONE
+-                            else RecoveryMethod()
++            try:
++                transformed = await self.sdk.post_tool(
++                    PostToolRequest(
++                        result_kind=ResultKind.TOOL,
++                        tool_name=tool_name,
++                        content=block.text,
++                        status=status,
++                        content_origin=contract.content_origin,
++                        output_optimization=optimization,
++                        capabilities=PostToolCapabilities(
++                            replace_output=True,
++                            recovery=(
++                                RecoveryMethod.tool(self.retrieve_tool_name)
++                                if status == ToolResultStatus.SUCCESS
++                                and optimization == OutputOptimization.NONE
++                                else RecoveryMethod()
++                            ),
++                            replace_with_text=True,
+                         ),
+-                        replace_with_text=True,
+-                    ),
+-                    attribution=attribution,
+-                    command=command,
++                        attribution=attribution,
++                        command=command,
++                    )
+                 )
+-            )
++            except Exception:
++                # SDK/version failures cannot abort completed host tool calls.
++                # Earlier stash writes remain unreferenced: no partial markers escape.
++                self._post_tool_failures += 1
++                logger.exception(
++                    "tokenless: post_tool failed for %s; preserving original result "
++                    "(failures=%d, tool_use_id=%r)",
++                    tool_name,
++                    self._post_tool_failures,
++                    attribution.tool_use_id,
++                )
++                return response
+             extra_context = extra_context or transformed.additional_context
+             if transformed.output != block.text:
+                 replacements[index] = block.model_copy(update={"text": transformed.output})
+--- a/src/tokenless/tests/test_agentscope_v1.py
++++ b/src/tokenless/tests/test_agentscope_v1.py
+@@ -3,8 +3,10 @@
+ 
+ from __future__ import annotations
+ 
++import asyncio
+ import importlib
+ import inspect
++import json
+ import sys
+ import types
+ import unittest
+@@ -243,6 +245,151 @@
+         self.agent = _Agent(self.toolkit)
+         self.integration.install(self.agent, session_id="session-1")
+ 
++    async def test_sdk_post_tool_failure_retains_complete_result(self) -> None:
++        errors = (
++            (core.TokenlessError, ("stash backend unavailable",)),
++            (ValueError, ("invalid Core response",)),
++            (TypeError, ("invalid Core response object",)),
++            (KeyError, ("missing response field",)),
++            (json.JSONDecodeError, ("invalid Core JSON", "{", 0)),
++            (RuntimeError, ("SDK lifecycle failure",)),
++        )
++        for error_type, error_args in errors:
++            for failure_at in (1, 2):
++                for success, interrupted in ((True, False), (False, False), (False, True)):
++                    with self.subTest(
++                        error=error_type,
++                        failure_at=failure_at,
++                        success=success,
++                        interrupted=interrupted,
++                    ):
++                        calls = 0
++
++                        async def post_tool(request):
++                            nonlocal calls
++                            calls += 1
++                            if calls == failure_at:
++                                raise error_type(*error_args)
++                            return _post_response("compressed", "temporary hint")
++
++                        self.integration.sdk.post_tool = post_tool
++                        image = {"type": "image", "source": {"url": "https://example.com/image"}}
++                        content = [
++                            {"type": "text", "text": "first original result"},
++                            image,
++                            {"type": "text", "text": "second original result"},
++                        ]
++                        metadata = {"success": success, "duration": 3}
++                        response = _Response(content, metadata=metadata, is_interrupted=interrupted)
++                        chunk = _Response(
++                            [{"type": "text", "text": "streamed chunk"}], is_last=False
++                        )
++                        call = {"name": "large_result", "id": "failed-compression", "input": {}}
++                        registered = self.toolkit.tools["large_result"]
++                        self.assertIs(await registered.postprocess_func(call, chunk), chunk)
++                        self.assertEqual(calls, 0)
++                        failures = self.integration._post_tool_failures
++                        with mock.patch.object(
++                            self.integration, "_status", wraps=self.integration._status
++                        ) as status:
++                            with self.assertLogs("tokenless_agentscope._v1", level="ERROR") as logs:
++                                result = await registered.postprocess_func(call, response)
++                        status.assert_called_once_with(response)
++                        self.assertIs(result, response)
++                        self.assertIs(result.content, content)
++                        self.assertIs(result.metadata, metadata)
++                        self.assertIs(content[1], image)
++                        self.assertEqual(result.is_interrupted, interrupted)
++                        self.assertEqual(content[0]["text"], "first original result")
++                        self.assertEqual(content[2]["text"], "second original result")
++                        self.assertEqual(calls, failure_at)
++                        self.assertEqual(self.integration._post_tool_failures, failures + 1)
++                        self.assertIn(f"failures={failures + 1}", logs.output[0])
++                        self.assertIn("failed-compression", logs.output[0])
++
++    async def test_older_request_constructor_retains_original_result(self) -> None:
++        adapter = sys.modules[type(self.integration).__module__]
++        request_type = adapter.PostToolRequest
++
++        def older_request(
++            *,
++            result_kind,
++            tool_name,
++            content,
++            status,
++            content_origin,
++            output_optimization,
++            capabilities,
++            attribution,
++        ):
++            return request_type(
++                result_kind=result_kind,
++                tool_name=tool_name,
++                content=content,
++                status=status,
++                content_origin=content_origin,
++                output_optimization=output_optimization,
++                capabilities=capabilities,
++                attribution=attribution,
++            )
++
++        post_tool = mock.AsyncMock(return_value=_post_response("unexpected replacement"))
++        self.integration.sdk.post_tool = post_tool
++        response = _Response(
++            [{"type": "text", "text": "original result"}], metadata={"success": True}
++        )
++        with mock.patch.object(adapter, "PostToolRequest", older_request):
++            with self.assertLogs("tokenless_agentscope._v1", level="ERROR") as logs:
++                result = await self.toolkit.tools["large_result"].postprocess_func(
++                    {"name": "large_result", "id": "old-wheel", "input": {}}, response
++                )
++        self.assertIs(result, response)
++        post_tool.assert_not_awaited()
++        self.assertIn("unexpected keyword argument 'command'", logs.output[0])
++
++    async def test_invalid_core_wire_response_retains_original_result(self) -> None:
++        for raw in ("[]", "{", "{}", '{"output":"ignored","disposition":"unknown"}'):
++            with self.subTest(raw=raw):
++                response = _Response(
++                    [{"type": "text", "text": "original result"}], metadata={"success": True}
++                )
++                with mock.patch.object(
++                    self.integration.sdk.runtime, "_post_tool_json", return_value=raw, create=True
++                ) as native:
++                    with self.assertLogs("tokenless_agentscope._v1", level="ERROR"):
++                        result = await self.toolkit.tools["large_result"].postprocess_func(
++                            {"name": "large_result", "id": "invalid-response", "input": {}},
++                            response,
++                        )
++                self.assertIs(result, response)
++                native.assert_called_once()
++
++    async def test_post_tool_cancellation_propagates(self) -> None:
++        async def post_tool(request):
++            raise asyncio.CancelledError()
++
++        self.integration.sdk.post_tool = post_tool
++        response = _Response([{"type": "text", "text": "original result"}])
++        with self.assertRaises(asyncio.CancelledError):
++            await self.toolkit.tools["large_result"].postprocess_func(
++                {"name": "large_result", "id": "cancelled", "input": {}}, response
++            )
++        self.assertEqual(self.integration._post_tool_failures, 0)
++        self.assertEqual(response.content[0]["text"], "original result")
++
++    async def test_uninstalled_integration_error_remains_visible(self) -> None:
++        self.integration._installed_agent = None
++        post_tool = mock.AsyncMock()
++        self.integration.sdk.post_tool = post_tool
++        with self.assertRaisesRegex(RuntimeError, "must be installed before use"):
++            await self.integration._after_tool(
++                self.toolkit,
++                {"name": "large_result", "id": "not-installed", "input": {}},
++                _Response([{"type": "text", "text": "original result"}]),
++            )
++        post_tool.assert_not_awaited()
++        self.assertEqual(self.integration._post_tool_failures, 0)
++
+     async def _assert_postprocessor_chain(
+         self,
+         registrar: Any,
+--- a/src/tokenless/tests/test_agentscope_middleware.py
++++ b/src/tokenless/tests/test_agentscope_middleware.py
+@@ -4,6 +4,7 @@
+ from __future__ import annotations
+ 
+ import copy
++import asyncio
+ import importlib
+ import json
+ import sys
+@@ -203,6 +204,163 @@
+         )
+         self.agent = _Agent("agent-2", _State("session-2"))
+ 
++    async def test_sdk_post_tool_failure_retains_complete_result(self) -> None:
++        errors = (
++            (core.TokenlessError, ("stash backend unavailable",)),
++            (ValueError, ("invalid Core response",)),
++            (TypeError, ("invalid Core response object",)),
++            (KeyError, ("missing response field",)),
++            (json.JSONDecodeError, ("invalid Core JSON", "{", 0)),
++            (RuntimeError, ("SDK lifecycle failure",)),
++        )
++        for error_type, error_args in errors:
++            for failure_at in (1, 2):
++                for state in (
++                    _ResultState.SUCCESS,
++                    _ResultState.ERROR,
++                    _ResultState.INTERRUPTED,
++                    _ResultState.DENIED,
++                ):
++                    with self.subTest(error=error_type, failure_at=failure_at, state=state):
++                        calls = 0
++
++                        async def post_tool(request):
++                            nonlocal calls
++                            calls += 1
++                            if calls == failure_at:
++                                raise error_type(*error_args)
++                            return _post_response("compressed", "temporary hint")
++
++                        self.middleware.sdk.post_tool = post_tool
++                        image = object()
++                        content = [
++                            _TextBlock("first original result"),
++                            image,
++                            _TextBlock("second original result"),
++                        ]
++                        response = _ToolResponse(content, state=state)
++                        metadata = {"duration": 3}
++                        response.metadata = metadata
++                        chunk = _ToolChunk([_TextBlock("streamed chunk")])
++
++                        async def next_handler(**kwargs):
++                            yield chunk
++                            yield response
++
++                        failures = self.middleware._post_tool_failures
++                        with mock.patch.object(
++                            self.middleware, "_status", wraps=self.middleware._status
++                        ) as status:
++                            with self.assertLogs("tokenless_agentscope._v2", level="ERROR") as logs:
++                                result = await _collect(
++                                    self.middleware.on_acting(
++                                        self.agent,
++                                        {"tool_call": _Call("failed-compression", "api", "{}")},
++                                        next_handler,
++                                    )
++                                )
++                        status.assert_called_once_with(state)
++                        self.assertIs(result[0], chunk)
++                        self.assertIs(result[1], response)
++                        self.assertIs(response.content, content)
++                        self.assertIs(response.metadata, metadata)
++                        self.assertIs(content[1], image)
++                        self.assertEqual(response.state, state)
++                        self.assertEqual(content[0].text, "first original result")
++                        self.assertEqual(content[2].text, "second original result")
++                        self.assertEqual(calls, failure_at)
++                        self.assertEqual(self.middleware._post_tool_failures, failures + 1)
++                        self.assertIn(f"failures={failures + 1}", logs.output[0])
++                        self.assertIn("failed-compression", logs.output[0])
++
++    async def test_older_request_constructor_retains_original_result(self) -> None:
++        adapter = sys.modules[type(self.middleware).__module__]
++        request_type = adapter.PostToolRequest
++
++        def older_request(
++            *,
++            result_kind,
++            tool_name,
++            content,
++            status,
++            content_origin,
++            output_optimization,
++            capabilities,
++            attribution,
++        ):
++            return request_type(
++                result_kind=result_kind,
++                tool_name=tool_name,
++                content=content,
++                status=status,
++                content_origin=content_origin,
++                output_optimization=output_optimization,
++                capabilities=capabilities,
++                attribution=attribution,
++            )
++
++        post_tool = mock.AsyncMock(return_value=_post_response("unexpected replacement"))
++        self.middleware.sdk.post_tool = post_tool
++        response = _ToolResponse([_TextBlock("original result")])
++
++        async def next_handler(**kwargs):
++            yield response
++
++        with mock.patch.object(adapter, "PostToolRequest", older_request):
++            with self.assertLogs("tokenless_agentscope._v2", level="ERROR") as logs:
++                result = await _collect(
++                    self.middleware.on_acting(
++                        self.agent, {"tool_call": _Call("old-wheel", "api", "{}")}, next_handler
++                    )
++                )
++        self.assertIs(result[0], response)
++        post_tool.assert_not_awaited()
++        self.assertIn("unexpected keyword argument 'command'", logs.output[0])
++
++    async def test_invalid_core_wire_response_retains_original_result(self) -> None:
++        for raw in ("[]", "{", "{}", '{"output":"ignored","disposition":"unknown"}'):
++            with self.subTest(raw=raw):
++                response = _ToolResponse([_TextBlock("original result")])
++
++                async def next_handler(**kwargs):
++                    yield response
++
++                with mock.patch.object(
++                    self.middleware.sdk.runtime, "_post_tool_json", return_value=raw, create=True
++                ) as native:
++                    with self.assertLogs("tokenless_agentscope._v2", level="ERROR"):
++                        result = await _collect(
++                            self.middleware.on_acting(
++                                self.agent,
++                                {"tool_call": _Call("invalid-response", "api", "{}")},
++                                next_handler,
++                            )
++                        )
++                self.assertIs(result[0], response)
++                native.assert_called_once()
++
++    async def test_post_tool_cancellation_propagates(self) -> None:
++        async def post_tool(request):
++            raise asyncio.CancelledError()
++
++        self.middleware.sdk.post_tool = post_tool
++        response = _ToolResponse([_TextBlock("original result")])
++        chunk = _ToolChunk([_TextBlock("streamed chunk")])
++
++        async def next_handler(**kwargs):
++            yield chunk
++            yield response
++
++        observed = []
++        with self.assertRaises(asyncio.CancelledError):
++            async for item in self.middleware.on_acting(
++                self.agent, {"tool_call": _Call("cancelled", "api", "{}")}, next_handler
++            ):
++                observed.append(item)
++        self.assertEqual(observed, [chunk])
++        self.assertEqual(self.middleware._post_tool_failures, 0)
++        self.assertEqual(response.content[0].text, "original result")
++
+     async def test_malformed_tool_input_fails_open_instead_of_killing_the_reply(self) -> None:
+         """A repairable-but-invalid tool input must not crash on_acting.
+ 
+--- a/src/tokenless/docs/response-compression.md
++++ b/src/tokenless/docs/response-compression.md
+@@ -436,6 +436,7 @@
+ 所有集成路径均采用 fail-open 策略：
+ 
+ - **OpenClaw 插件**：Protocol v2 进程失败、非法响应或不能安全重建 Slot 时，Hook 不返回值 → 宿主交付的结果透传（不恢复宿主此前的截断）
++- **进程内 Python 适配器**（AgentScope 1.x/2.x、QwenPaw）：工具完成后，Core 错误、无效 SDK 响应或不兼容 Wheel 导致 PostTool 压缩失败时，保留完整宿主响应，包括流式 Chunk、非文本 Block、Metadata 和结果状态；不交付部分压缩结果。取消操作等 `BaseException` 信号继续传播。AgentScope 的双语说明见 [English](../../../docs/developer-guide/en/sdk/tokenless/agentscope.md#completed-tool-results-on-compression-failure) / [中文](../../../docs/developer-guide/zh/sdk/tokenless/agentscope.md#压缩失败时保留已完成的工具结果)。
+ - **copilot-shell hook**：任何失败点（依赖缺失、压缩失败、输出为空）均 `exit 0` 且不输出 stdout → 原始结果透传
+ - **CLI**：错误输出到 stderr，调用方可检查退出码决定是否回退
+ 
+--- a/docs/developer-guide/en/sdk/tokenless/agentscope.md
++++ b/docs/developer-guide/en/sdk/tokenless/agentscope.md
+@@ -161,6 +161,21 @@
+ wheel contains RTK and links TOON directly, so it does not search for system helper binaries. Tool
+ Ready remains hard-disabled.
+ 
++### Completed tool results on compression failure
++
++The AgentScope 1.x and 2.x adapters retain the complete received tool response
++when PostTool compression fails, including Core errors, invalid SDK responses,
++and incompatible wheel request signatures. Intermediate streamed chunks,
++non-text blocks, metadata, and the final result state remain unchanged; a later
++block failure also discards earlier replacement text and recovery hints.
++Failures are logged with the tool-use identifier and a per-instance count.
++
++This boundary covers SDK request construction and execution after a host tool
++has completed. Cancellation and other `BaseException` signals still propagate,
++and AgentScope 1.x still requires `install()` before use. Earlier successful
++compression calls can leave unreferenced Stash entries, but no partial recovery
++markers are exposed to the model.
++
+ ## Validate the integration
+ 
+ Run the installed-wheel and supported-version matrix tests from a source checkout:
+--- a/docs/developer-guide/zh/sdk/tokenless/agentscope.md
++++ b/docs/developer-guide/zh/sdk/tokenless/agentscope.md
+@@ -150,6 +150,17 @@
+ 环境错误提示和逐调用归属。平台 Wheel 内置 RTK 并直接链接 TOON，不会搜索系统 Helper。
+ Tool Ready 仍保持硬关闭。
+ 
++### 压缩失败时保留已完成的工具结果
++
++AgentScope 1.x 和 2.x 适配器在 PostTool 压缩失败时保留宿主交付的完整工具响应，
++包括 Core 错误、无效 SDK 响应和不兼容 Wheel 的请求签名。中间流式 Chunk、非文本
++Block、Metadata 和最终结果状态均保持不变；后续 Block 失败时，也会放弃先前生成的
++替换文本和恢复提示。日志包含工具调用标识和实例内累计失败次数。
++
++该边界只覆盖宿主工具完成后的 SDK 请求构造与执行。取消操作和其他 `BaseException`
++信号仍向外传播，AgentScope 1.x 仍要求先执行 `install()`。此前成功的压缩调用可能
++留下未被引用的 Stash 条目，但不会向模型暴露部分恢复 Marker。
++
+ ## 验证集成
+ 
+ 在源码 checkout 中运行 installed-wheel 与支持版本矩阵测试：
