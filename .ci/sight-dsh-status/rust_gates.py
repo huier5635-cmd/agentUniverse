@@ -17,6 +17,10 @@ for row in manifest["files"]:
     path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(DRIVER / "files" / row["path"], path)
     assert hashlib.sha256(path.read_bytes()).hexdigest() == row["candidate_sha256"]
+subprocess.run(["git", "add", "--", *[row["path"] for row in manifest["files"]]], cwd=SOURCE, check=True)
+subprocess.run(["git", "diff", "--cached", "--check"], cwd=SOURCE, check=True)
+actual_tree = subprocess.check_output(["git", "write-tree"], cwd=SOURCE, text=True).strip()
+assert actual_tree == manifest["source_tree"], (actual_tree, manifest["source_tree"])
 commands = [
     ("format", ["cargo", "fmt", "--all", "--", "--check"]),
     ("architecture", ["python3", "scripts/check-arch-boundaries.py"]),
@@ -32,7 +36,7 @@ for name, command in commands:
     results[name] = p.returncode
     print(name, p.returncode, (EVIDENCE / (name + ".log")).read_text(errors="replace")[-1800:], flush=True)
 (EVIDENCE / "summary.json").write_text(json.dumps({
-    "base": manifest["base"], "files": manifest["files"], "commands": results,
+    "base": manifest["base"], "source_tree": actual_tree, "files": manifest["files"], "commands": results,
     "rustc": subprocess.check_output(["rustc", "--version"], text=True).strip(),
     "scope": "unchanged Rust workspace gates; no live eBPF load claimed",
 }, indent=2))
