@@ -1,8 +1,0 @@
-id: workflow_726
-name: xs_test_workflow
-description: ''
-graph:
-metadata:
-  class: Workflow
-  module: agentuniverse.workflow.workflow
-  type: WORKFLOW
