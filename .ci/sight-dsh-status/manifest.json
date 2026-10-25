@@ -1,5 +1,5 @@
 {
-  "base": "5351c892f2e89d6be799ebdbeea948c173d3d7c2",
+  "base": "d17f1190ff7c50a72ef8249e8333a2125b6d6055",
   "issue": 8307,
   "files": [
     {
@@ -15,7 +15,10 @@
     {
       "path": "src/agentsight/dsh-plugin/test/status.test.mjs",
       "original_sha256": null,
-      "candidate_sha256": "5c6ca6c6ab55ace9463bf335520d478f8e2d0e3abdc43ec8f019eb1c56b0d599"
+      "candidate_sha256": "9d985a9e83ec0d8154ad3d9b746a682d9bb03832842428a5c655e674d68ae281"
     }
-  ]
+  ],
+  "old_head": "f8a81b26086aab33f7f7ba0fddbdbc5b2adbf387",
+  "review_comment": 6394648609,
+  "source_tree": "c26b5188815b464f213b31a18a7468ecd87a5fba"
 }

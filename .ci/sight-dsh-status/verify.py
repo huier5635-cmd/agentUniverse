@@ -91,6 +91,10 @@ run("public-test-command", ["pnpm", "test"])
 for row in records:
     assert digest(SOURCE / row["path"]) == row["candidate_sha256"]
 run("diff-check", ["git", "-C", str(SOURCE), "diff", "--check"])
+subprocess.run(["git", "add", "--", *[row["path"] for row in records]], cwd=SOURCE, check=True)
+run("staged-diff-check", ["git", "-C", str(SOURCE), "diff", "--cached", "--check"])
+actual_tree = subprocess.check_output(["git", "write-tree"], cwd=SOURCE, text=True).strip()
+assert actual_tree == manifest["source_tree"], (actual_tree, manifest["source_tree"])
 result = {"base": manifest["base"], "files": records, "versions": versions,
           "baseline": red, "fixed": green, "compiling_wrong_argument_mutation": mutant,
           "scope": "real Cordis plugin loading and dsh ToolRuntime execution; no full CLI/model/eBPF claim"}

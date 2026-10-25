@@ -68,4 +68,3 @@ test('real dsh tool runtime returns a successful model-facing status', { timeout
     { type: 'text', text: `AgentSight v${version} — active` },
   ])
 })
-

@@ -1,18 +1,17 @@
-name: AgentSight original Rust failure confirmation
+name: AgentSight dsh status plugin recheck
 on:
   push:
     branches: [ci/sight-dsh-status]
 permissions:
   contents: read
 jobs:
-  original:
+  plugin:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      CARGO_PROFILE_DEV_DEBUG: '0'
-      CARGO_PROFILE_TEST_DEBUG: '0'
-      CARGO_BUILD_JOBS: '2'
-      RUSTUP_TOOLCHAIN: '1.89.0'
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        tools: ['0.1.0-rc.2', '0.1.0-rc.8', '0.2.0-rc.2']
     steps:
       - uses: actions/checkout@v4
         with:
@@ -20,26 +19,23 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: agentic-os-org/ANOLISA
-          ref: 5351c892f2e89d6be799ebdbeea948c173d3d7c2
+          ref: d17f1190ff7c50a72ef8249e8333a2125b6d6055
           path: official
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@1.89.0
+      - uses: actions/setup-node@v4
         with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+          node-version: '22.23.3'
+      - uses: pnpm/action-setup@v4
         with:
-          workspaces: official/src/agentsight
-          shared-key: sight-dsh-status-gates
-          cache-on-failure: true
-      - name: Install native build dependencies
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -y clang llvm libclang-dev libbpf-dev libelf-dev elfutils libssl-dev zlib1g-dev pkg-config perl
-      - name: Reproduce unchanged assertion on pristine official checkout
-        run: python3 .ci/sight-dsh-status/verify_rust_baseline.py
+          version: '11.25.0'
+          run_install: false
+      - name: Compare original, fixed and compiling mutation
+        env:
+          TOOLS_VERSION: ${{ matrix.tools }}
+        run: python3 .ci/sight-dsh-status/verify.py --tools-version "$TOOLS_VERSION"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: dsh-status-pristine-rust-baseline
+          name: dsh-status-${{ matrix.tools }}
           path: evidence/
           if-no-files-found: error
