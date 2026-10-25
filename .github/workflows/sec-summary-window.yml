@@ -64,7 +64,7 @@ jobs:
           PYTHONPATH: agent-sec-cli/src
         run: |
           cp "$GITHUB_WORKSPACE/payload/summary_formatter.py" agent-sec-cli/src/agent_sec_cli/security_events/summary_formatter.py
-          uv run --project agent-sec-cli --no-sync python -m black --config agent-sec-cli/pyproject.toml --check agent-sec-cli/src/agent_sec_cli/security_events/summary_formatter.py tests/unit-test/security_events/test_summary_formatter_compliance.py
+          uv run --project agent-sec-cli --no-sync python -m black --check agent-sec-cli/src/agent_sec_cli/security_events/summary_formatter.py tests/unit-test/security_events/test_summary_formatter_compliance.py
           uv run --project agent-sec-cli --no-sync python -m isort --settings-path agent-sec-cli/pyproject.toml --check-only agent-sec-cli/src/agent_sec_cli/security_events/summary_formatter.py tests/unit-test/security_events/test_summary_formatter_compliance.py
           uv run --project agent-sec-cli --no-sync python -m ruff check --config agent-sec-cli/pyproject.toml agent-sec-cli/src/agent_sec_cli/security_events/summary_formatter.py tests/unit-test/security_events/test_summary_formatter_compliance.py
           uv run --project agent-sec-cli --no-sync python -m pytest tests/unit-test/security_events/ -q --cov=agent_sec_cli.security_events.summary_formatter --cov-branch --cov-report=term-missing --cov-report=json:"$GITHUB_WORKSPACE/evidence/coverage.json" --junitxml="$GITHUB_WORKSPACE/evidence/fixed.xml" | tee "$GITHUB_WORKSPACE/evidence/fixed.txt"
