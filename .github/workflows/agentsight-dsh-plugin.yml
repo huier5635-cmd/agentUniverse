@@ -1,0 +1,89 @@
+name: CI / AgentSight DSH plugin
+
+on:
+  push:
+    branches: [ci/agentsight-dsh-tests-20261026]
+    paths:
+      - 'src/agentsight/dsh-plugin/**'
+      - '.github/workflows/agentsight-dsh-plugin.yml'
+  pull_request:
+    branches: [main, 'release/**']
+    paths:
+      - 'src/agentsight/dsh-plugin/**'
+      - '.github/workflows/agentsight-dsh-plugin.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-dsh-plugin:
+    name: Test AgentSight DSH plugin
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: source/src/agentsight/dsh-plugin
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/checkout@v4
+        with:
+          repository: huier5635-cmd/ANOLISA
+          ref: f0ad8c8a6caa788e215d5713b4ee8c11fa72354b
+          path: source
+          persist-credentials: false
+          sparse-checkout: src/agentsight/dsh-plugin
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '11.25.0'
+
+      - name: Install plugin dependencies
+        run: pnpm install --no-frozen-lockfile --ignore-scripts
+
+      - name: Run plugin regression tests
+        run: pnpm test
+
+      - name: Prove the new job rejects a renderer regression
+        run: |
+          cp src/index.ts "$RUNNER_TEMP/dsh-original-index.ts"
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/index.ts')
+          text = p.read_text()
+          old = 'render: (_args, value) => {'
+          assert text.count(old) == 1
+          p.write_text(text.replace(old, 'render: (value, _args) => {'))
+          PY
+          set +e
+          pnpm test > "$RUNNER_TEMP/dsh-mutation.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/dsh-mutation.log"
+          cp "$RUNNER_TEMP/dsh-original-index.ts" src/index.ts
+          test "$result" -eq 1
+          if grep -q 'error TS[0-9]' "$RUNNER_TEMP/dsh-mutation.log"; then
+            echo 'Mutation must compile and fail behavioral assertions'
+            exit 1
+          fi
+
+      - name: Validate the exact upstream workflow
+        working-directory: .
+        run: |
+          printf '%s\n' 'self-hosted-runner:' '  labels:' '    - anolisa-k8s-general-ci-x64' > "$RUNNER_TEMP/actionlint.yaml"
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -config-file "$RUNNER_TEMP/actionlint.yaml" payload/agentsight-dsh-plugin.yml
+
+      - name: Preserve regression-control evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentsight-dsh-ci-evidence
+          path: ${{ runner.temp }}/dsh-mutation.log
+          if-no-files-found: error

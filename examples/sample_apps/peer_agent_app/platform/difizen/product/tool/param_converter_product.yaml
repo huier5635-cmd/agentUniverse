@@ -1,8 +1,0 @@
-id: param_converter
-nickname: 参数转换工具
-type: TOOL
-avatar:
-metadata:
-  type: 'PRODUCT'
-  module: 'agentuniverse_product.base.product'
-  class: 'Product'
