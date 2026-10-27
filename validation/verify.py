@@ -30,17 +30,17 @@ try:
     run("cargo-version", ["cargo", "--version"])
     original = source.read_bytes()
     (evidence / "original-heuristics.rs").write_bytes(original)
-    shutil.copy2(payload / "session_summary_tools_test.rs", test)
+    shutil.copyfile(payload / "session_summary_tools_test.rs", test)
     baseline = run("baseline", ["cargo", "test", "--locked", "--test",
                                "session_summary_tools_test"], expected=101)
     assert re.search(r"1 passed; 2 failed; 0 ignored", baseline.stdout), baseline.stdout[-4000:]
     assert "left == right" in baseline.stdout
-    shutil.copy2(payload / "heuristics.rs", source)
+    shutil.copyfile(payload / "heuristics.rs", source)
     run("format-changed", ["rustfmt", "--edition", "2024", str(source), str(test)])
     formatted = evidence / "formatted"
     formatted.mkdir(exist_ok=True)
-    shutil.copy2(source, formatted / "heuristics.rs")
-    shutil.copy2(test, formatted / "session_summary_tools_test.rs")
+    shutil.copyfile(source, formatted / "heuristics.rs")
+    shutil.copyfile(test, formatted / "session_summary_tools_test.rs")
     run("format-check", ["cargo", "fmt", "--all", "--", "--check"])
     fixed = run("fixed", ["cargo", "test", "--locked", "--test",
                          "session_summary_tools_test"])
