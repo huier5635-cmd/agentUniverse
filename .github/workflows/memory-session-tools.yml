@@ -1,0 +1,46 @@
+name: Validate session summary tool lists
+on:
+  push:
+    branches: ['ci/memory-session-tools-20261028']
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_BUILD_JOBS: '2'
+      RUST_BACKTRACE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: agentic-os-org/ANOLISA
+          ref: c894728f1c092c0e0552f02bc52143d2593dd4b9
+          path: source
+          persist-credentials: false
+          sparse-checkout: |
+            src/agent-memory
+            scripts
+            .github
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.89.0'
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: source/src/agent-memory
+      - name: Install Linux prerequisites
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libsystemd-dev cmake
+      - name: Verify baseline and fixed production behavior
+        run: python3 validation/verify.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: memory-session-tools-evidence
+          path: evidence/
