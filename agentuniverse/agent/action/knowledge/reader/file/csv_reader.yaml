@@ -1,6 +1,0 @@
-name: 'default_csv_reader'
-description: 'default csv reader'
-metadata:
-  type: 'READER'
-  module: 'agentuniverse.agent.action.knowledge.reader.file.csv_reader'
-  class: 'CSVReader'

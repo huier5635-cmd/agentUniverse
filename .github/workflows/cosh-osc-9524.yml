@@ -1,0 +1,36 @@
+name: Validate cosh OSC text stripping
+on:
+  push:
+    branches: [ci/cosh-osc-9524-20261105]
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: agentic-os-org/ANOLISA
+          ref: b9516bedad144591970f0cb9b348ed1620806ee6
+          path: source
+          persist-credentials: false
+          sparse-checkout: src/cosh-ng
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: source/src/cosh-ng
+      - name: Validate exact candidate and baseline control
+        run: python3 payload/validate.py
+      - name: Save validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cosh-osc-9524-evidence
+          path: evidence
+          if-no-files-found: error

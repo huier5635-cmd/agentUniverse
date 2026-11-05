@@ -1,5 +1,0 @@
-name: 'multimodal_service'
-description: 'multimodal service'
-agent: 'multimodal_agent'
-metadata:
-  type: 'SERVICE'
