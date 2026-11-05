@@ -1,4 +1,4 @@
-name: Btrfs mount final source gates
+name: Btrfs review revision validation
 on:
   push:
     branches: [ci/ckpt-btrfs-mount-wip-20261023]
@@ -7,27 +7,30 @@ permissions:
 jobs:
   gates:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        gate: [package-docs, rust-coverage]
+        gate: [rust-native, coverage, plugins-package-docs]
     steps:
       - uses: actions/checkout@v4
         with:
           path: payload
+          persist-credentials: false
       - uses: actions/checkout@v4
         with:
           repository: agentic-os-org/ANOLISA
-          ref: 5351c892f2e89d6be799ebdbeea948c173d3d7c2
+          ref: b9516bedad144591970f0cb9b348ed1620806ee6
           path: upstream
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
-          components: rustfmt
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-        if: matrix.gate == 'rust-coverage'
+        if: matrix.gate != 'plugins-package-docs'
         with:
           workspaces: upstream/src/ws-ckpt/src
+          cache-on-failure: true
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11.6'
@@ -35,22 +38,17 @@ jobs:
         with:
           node-version: '20'
       - uses: taiki-e/install-action@v2
-        if: matrix.gate == 'rust-coverage'
+        if: matrix.gate == 'coverage'
         with:
           tool: cargo-tarpaulin@0.37.2
           fallback: none
       - name: Install filesystem utilities
-        run: sudo apt-get update -qq && sudo apt-get install -y btrfs-progs rsync
-      - name: Compare baseline and candidate coverage without filtering tests
-        if: matrix.gate == 'rust-coverage'
-        run: python payload/.ci/btrfs-final/coverage_compare.py upstream coverage-evidence
-      - name: Verify final source and component gates
-        if: matrix.gate == 'package-docs'
-        run: python payload/.ci/btrfs-final/final_gates.py upstream evidence ${{ matrix.gate }}
+        run: sudo apt-get update -qq && sudo apt-get install -y btrfs-progs rsync dmsetup
+      - name: Validate rebased source with review regressions
+        run: python payload/.ci/btrfs-review/gates.py upstream evidence ${{ matrix.gate }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: btrfs-final-${{ matrix.gate }}
-          path: |
-            evidence/
-            coverage-evidence/
+          name: btrfs-review-${{ matrix.gate }}
+          path: evidence/
+          if-no-files-found: error
