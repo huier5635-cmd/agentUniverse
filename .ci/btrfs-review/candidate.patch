@@ -1,10 +1,10 @@
 diff --git a/docs/user-guide/en/ws-ckpt/index.md b/docs/user-guide/en/ws-ckpt/index.md
-index a29cf04..8b64c85 100644
+index 1d2e391..fdffd28 100644
 --- a/docs/user-guide/en/ws-ckpt/index.md
 +++ b/docs/user-guide/en/ws-ckpt/index.md
-@@ -298,7 +298,69 @@ Inspect the cause with `sudo journalctl -u ws-ckpt -n 100 --no-pager`. After fix
- 
- The daemon configuration file is located at `/etc/ws-ckpt/config.toml`. This is a system-level configuration for the ws-ckpt daemon process.
+@@ -318,7 +318,69 @@ is offline, a valid correction is saved but the CLI may exit non-zero because
+ it cannot verify the daemon's configuration. Fix all invalid fields before
+ restarting; choose an image size that fits the workspace and retained history.
  
 -There is no user-side global config file. Auto-checkpoint and cleanup behavior are controlled per-plugin:
 +There is no user-side global config file. Plugin-specific auto-checkpoint behavior is configured separately below.
@@ -74,12 +74,12 @@ index a29cf04..8b64c85 100644
  ### OpenClaw Plugin Configuration
  
 diff --git a/docs/user-guide/zh/ws-ckpt/index.md b/docs/user-guide/zh/ws-ckpt/index.md
-index ae64dab..cde0e0b 100644
+index 949d171..0f33c62 100644
 --- a/docs/user-guide/zh/ws-ckpt/index.md
 +++ b/docs/user-guide/zh/ws-ckpt/index.md
-@@ -271,7 +271,55 @@ systemd 服务在失败后等待 10 秒重试，5 分钟内最多启动 4 次（
- 
- daemon 配置文件位于 `/etc/ws-ckpt/config.toml`，为系统级 daemon 进程配置。
+@@ -287,7 +287,55 @@ TOML 语法或字段类型错误仍需手工修正。daemon 未运行时，合
+ 但 CLI 可能因无法核验 daemon 配置而以非零退出。重启前修复所有非法字段，并按工作区
+ 及保留历史的实际需求选择镜像容量。
  
 -不存在用户侧全局配置文件。自动检查点和清理行为通过各插件配置控制：
 +不存在用户侧全局配置文件。插件各自的自动检查点行为在下文单独配置。
@@ -135,10 +135,10 @@ index ae64dab..cde0e0b 100644
  ### OpenClaw 插件配置
  
 diff --git a/src/ws-ckpt/README.md b/src/ws-ckpt/README.md
-index 15ba366..68178ad 100644
+index 2fc3e45..9b03169 100644
 --- a/src/ws-ckpt/README.md
 +++ b/src/ws-ckpt/README.md
-@@ -186,6 +186,14 @@ ws-ckpt reload
+@@ -195,6 +195,14 @@ ws-ckpt reload
  
  `config -g` writes the global file, then verifies the daemon reloaded the same settings — it exits non-zero and lists any field that differs. In a Kubernetes sidecar deployment the CLI and daemon run in separate containers, so `/etc/ws-ckpt` must be on a volume shared by both, or global settings will not reach the daemon.
  
@@ -154,10 +154,10 @@ index 15ba366..68178ad 100644
  
  | Command | Description |
 diff --git a/src/ws-ckpt/README_zh.md b/src/ws-ckpt/README_zh.md
-index 55a3776..71ad1b5 100644
+index c75dfa3..5a9df73 100644
 --- a/src/ws-ckpt/README_zh.md
 +++ b/src/ws-ckpt/README_zh.md
-@@ -176,6 +176,13 @@ ws-ckpt reload
+@@ -183,6 +183,13 @@ ws-ckpt reload
  
  `config -g` 写入全局配置后会校验 daemon 重载了相同的设置——若有字段不一致会以非零退出并逐项列出。Kubernetes sidecar 部署下 CLI 与 daemon 运行在不同容器，`/etc/ws-ckpt` 必须挂在两容器共享的卷上，否则全局设置无法送达 daemon。
  
@@ -241,7 +241,7 @@ index bfa741e..c7e5ef8 100644
  8. 两个容器需要共享 `/etc/ws-ckpt`。
     `ws-ckpt config --global` 会直接写入
 diff --git a/src/ws-ckpt/docs/ws-ckpt-design.md b/src/ws-ckpt/docs/ws-ckpt-design.md
-index 89d906c..e59db20 100644
+index 8797cbf..f6d5d10 100644
 --- a/src/ws-ckpt/docs/ws-ckpt-design.md
 +++ b/src/ws-ckpt/docs/ws-ckpt-design.md
 @@ -513,16 +513,40 @@ pub trait StorageBackend: Send + Sync {
@@ -290,7 +290,7 @@ index 89d906c..e59db20 100644
  `BtrfsLoop` image 大小由两个配置共同约束（默认 `img_size = 30` GB，`img_max_percent = 40`）：
  
 diff --git a/src/ws-ckpt/src/config.toml.sample b/src/ws-ckpt/src/config.toml.sample
-index e9a7f0f..75af4de 100644
+index 7cddde1..35bb115 100644
 --- a/src/ws-ckpt/src/config.toml.sample
 +++ b/src/ws-ckpt/src/config.toml.sample
 @@ -7,7 +7,8 @@
@@ -303,7 +303,7 @@ index e9a7f0f..75af4de 100644
  # Most fields can also be updated via `ws-ckpt config --<flag>`, which writes
  # /etc/ws-ckpt/config.toml without comments — this sample stays as the
  # canonical reference for available options.
-@@ -36,4 +37,11 @@
+@@ -37,4 +38,11 @@
  
  # ── BtrfsBase backend ──
  [backend.btrfs-base]
@@ -317,10 +317,10 @@ index e9a7f0f..75af4de 100644
 +# Switching back does not recover pruned records. Back up state and data first.
 +# `ws-ckpt daemon --mount-path` configures only the BtrfsLoop mount point.
 diff --git a/src/ws-ckpt/src/crates/cli/src/main.rs b/src/ws-ckpt/src/crates/cli/src/main.rs
-index 76f0e57..4850c95 100644
+index 6ffe218..adcc86e 100644
 --- a/src/ws-ckpt/src/crates/cli/src/main.rs
 +++ b/src/ws-ckpt/src/crates/cli/src/main.rs
-@@ -123,7 +123,7 @@ struct ConfigArgs {
+@@ -128,7 +128,7 @@ struct ConfigArgs {
  enum Commands {
      /// Start the ws-ckpt daemon (manual mode)
      Daemon {
@@ -329,7 +329,7 @@ index 76f0e57..4850c95 100644
          #[arg(long, default_value = DEFAULT_MOUNT_PATH)]
          mount_path: PathBuf,
  
-@@ -371,6 +371,56 @@ async fn main() {
+@@ -376,6 +376,56 @@ async fn main() {
      }
  }
  
@@ -386,19 +386,14 @@ index 76f0e57..4850c95 100644
  async fn run(cli: Cli) -> Result<()> {
      match cli.command {
          Commands::Daemon {
-@@ -378,46 +428,12 @@ async fn run(cli: Cli) -> Result<()> {
+@@ -383,41 +433,12 @@ async fn run(cli: Cli) -> Result<()> {
              socket,
              log_level,
          } => {
--            // Load auto-cleanup settings from config file
+-            // Refuse to start on an invalid config: falling back to defaults
+-            // would silently drop the operator's other valid settings.
 -            let file_config = load_config_file(std::path::Path::new(CONFIG_FILE_PATH))
--                .unwrap_or_else(|e| {
--                    eprintln!(
--                        "Warning: failed to load {}: {}, using defaults",
--                        CONFIG_FILE_PATH, e
--                    );
--                    Default::default()
--                });
+-                .with_context(|| format!("failed to load {}", CONFIG_FILE_PATH))?;
 -            let config = DaemonConfig {
 +            let config = load_daemon_config(
 +                std::path::Path::new(CONFIG_FILE_PATH),
@@ -437,7 +432,7 @@ index 76f0e57..4850c95 100644
              ws_ckpt_daemon::run_daemon(config).await?;
          }
          Commands::Init { workspace } => {
-@@ -2154,6 +2170,15 @@ fn unlanded_global_settings(
+@@ -2240,6 +2261,15 @@ fn unlanded_global_settings(
      }
      let saved_loop = saved.backend.btrfs_loop.as_ref();
      let landed_loop = landed.backend.btrfs_loop.as_ref();
@@ -453,7 +448,7 @@ index 76f0e57..4850c95 100644
      let (saved_size, landed_size) = (
          saved_loop.and_then(|b| b.img_size),
          landed_loop.and_then(|b| b.img_size),
-@@ -2427,6 +2452,71 @@ async fn handle_recover(workspace: Option<String>, all: bool, force: bool) -> Re
+@@ -2513,6 +2543,71 @@ async fn handle_recover(workspace: Option<String>, all: bool, force: bool) -> Re
  
  #[cfg(test)]
  mod tests {
@@ -525,7 +520,7 @@ index 76f0e57..4850c95 100644
      use super::*;
      use clap::Parser;
  
-@@ -4211,6 +4301,28 @@ mod tests {
+@@ -4352,6 +4447,28 @@ mod tests {
          assert!(unlanded_global_settings(&saved, &saved).is_empty());
      }
  
@@ -555,10 +550,10 @@ index 76f0e57..4850c95 100644
      fn unlanded_settings_reported_when_daemon_never_saw_the_file() {
          // Sidecar case: daemon's own /etc/ws-ckpt/config.toml is absent, so it
 diff --git a/src/ws-ckpt/src/crates/common/src/lib.rs b/src/ws-ckpt/src/crates/common/src/lib.rs
-index 9866e95..586008d 100644
+index 79cba69..3537cdd 100644
 --- a/src/ws-ckpt/src/crates/common/src/lib.rs
 +++ b/src/ws-ckpt/src/crates/common/src/lib.rs
-@@ -1235,6 +1235,9 @@ pub struct DaemonConfig {
+@@ -1350,6 +1350,9 @@ pub struct DaemonConfig {
      pub health_check_interval_secs: u64,
      /// Backend type string from config: "auto" | "btrfs-base" | "btrfs-loop"
      pub backend_type: String,
@@ -568,7 +563,7 @@ index 9866e95..586008d 100644
      /// Target image size in GB. The on-disk image is grown/shrunk to match this at bootstrap.
      pub img_size: u64,
      /// Initial-creation cap as percentage of host partition capacity (0-100).
-@@ -1285,6 +1288,13 @@ pub struct BtrfsLoopConfig {
+@@ -1400,6 +1403,13 @@ pub struct BtrfsLoopConfig {
      pub img_max_percent: Option<f64>,
  }
  
@@ -582,7 +577,7 @@ index 9866e95..586008d 100644
  /// Backend configuration section in config file.
  #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
  pub struct BackendConfig {
-@@ -1294,6 +1304,9 @@ pub struct BackendConfig {
+@@ -1409,6 +1419,9 @@ pub struct BackendConfig {
      /// BtrfsLoop backend-specific settings
      #[serde(default, rename = "btrfs-loop")]
      pub btrfs_loop: Option<BtrfsLoopConfig>,
@@ -592,7 +587,7 @@ index 9866e95..586008d 100644
  }
  
  fn default_backend_type() -> String {
-@@ -1305,6 +1318,7 @@ impl Default for BackendConfig {
+@@ -1420,6 +1433,7 @@ impl Default for BackendConfig {
          Self {
              r#type: default_backend_type(),
              btrfs_loop: None,
@@ -600,7 +595,7 @@ index 9866e95..586008d 100644
          }
      }
  }
-@@ -1336,10 +1350,24 @@ pub fn load_config_file(path: &Path) -> Result<FileConfig, WsCkptError> {
+@@ -1456,10 +1470,24 @@ pub fn load_config_file_unvalidated(path: &Path) -> Result<FileConfig, WsCkptErr
      }
  }
  
@@ -626,7 +621,7 @@ index 9866e95..586008d 100644
      if let Some(loop_cfg) = &fc.backend.btrfs_loop {
          if let Some(pct) = loop_cfg.img_max_percent {
              if !pct.is_finite() || !(0.0..=100.0).contains(&pct) {
-@@ -1376,6 +1404,7 @@ impl Default for DaemonConfig {
+@@ -1506,6 +1534,7 @@ impl Default for DaemonConfig {
              auto_cleanup_interval_secs: DEFAULT_AUTO_CLEANUP_INTERVAL_SECS,
              health_check_interval_secs: DEFAULT_HEALTH_CHECK_INTERVAL_SECS,
              backend_type: "auto".to_string(),
@@ -945,10 +940,10 @@ index 39d48d4..1121d12 100644
              img_max_percent: 1.0,
              min_free_bytes: 0,
 diff --git a/src/ws-ckpt/src/crates/daemon/src/backends/btrfs_common.rs b/src/ws-ckpt/src/crates/daemon/src/backends/btrfs_common.rs
-index 1296d75..d39468b 100644
+index d338982..684e208 100644
 --- a/src/ws-ckpt/src/crates/daemon/src/backends/btrfs_common.rs
 +++ b/src/ws-ckpt/src/crates/daemon/src/backends/btrfs_common.rs
-@@ -10,7 +10,7 @@ use tracing::{debug, error, info, warn};
+@@ -11,7 +11,7 @@ use tracing::{debug, error, info, warn};
  use ws_ckpt_common::backend::{CreateAdmissionRefused, DiffError, SnapshotDeleteOutcome};
  use ws_ckpt_common::{ChangeType, DiffEntry};
  
@@ -957,7 +952,7 @@ index 1296d75..d39468b 100644
  
  /// init_workspace backup path (#673).
  pub fn backup_path_for(original_path: &str) -> String {
-@@ -2268,45 +2268,126 @@ pub struct MountInfo {
+@@ -2342,45 +2342,126 @@ pub struct MountInfo {
      pub mount_point: String,
  }
  
@@ -1066,7 +1061,7 @@ index 1296d75..d39468b 100644
 +    })?;
 +    if !metadata.is_dir() {
 +        bail!("BtrfsBase mount point {:?} is not a directory", mount_point);
-+    }
+     }
 +    Ok(())
 +}
 +
@@ -1108,7 +1103,7 @@ index 1296d75..d39468b 100644
 +            device: entry.device,
 +            mount_point: entry.mount_point.to_string_lossy().into_owned(),
 +        });
-     }
++    }
 +    bail!(
 +        "BtrfsBase mount point {:?} is not mounted (no exact /proc/mounts entry)",
 +        mount_point
@@ -1116,7 +1111,7 @@ index 1296d75..d39468b 100644
  }
  
  /// Warmup snapshot metadata cache to speed up subsequent btrfs operations.
-@@ -2336,6 +2417,131 @@ mod tests {
+@@ -2410,6 +2491,131 @@ mod tests {
      use super::*;
      use std::path::PathBuf;
  
@@ -1249,10 +1244,10 @@ index 1296d75..d39468b 100644
  
      async fn lock_real_btrfs_test() -> tokio::sync::MutexGuard<'static, ()> {
 diff --git a/src/ws-ckpt/src/crates/daemon/src/dispatcher.rs b/src/ws-ckpt/src/crates/daemon/src/dispatcher.rs
-index 910ea9e..d6f6cc0 100644
+index f77707d..65db444 100644
 --- a/src/ws-ckpt/src/crates/daemon/src/dispatcher.rs
 +++ b/src/ws-ckpt/src/crates/daemon/src/dispatcher.rs
-@@ -547,6 +547,20 @@ fn apply_global_config(state: &Arc<DaemonState>, file_config: &FileConfig) {
+@@ -635,6 +635,20 @@ fn apply_global_config(state: &Arc<DaemonState>, file_config: &FileConfig) {
          .unwrap_or(DEFAULT_HEALTH_CHECK_INTERVAL_SECS);
      cfg.backend_type = file_config.backend.r#type.clone();
  
@@ -1273,7 +1268,7 @@ index 910ea9e..d6f6cc0 100644
      // img_* are bootstrap-only: warn if changed but don't mutate cfg
      // (loop image size is fixed until the next restart, where
      // bootstrap reconciles target = min(img_size GiB, total * pct/100)).
-@@ -858,6 +872,7 @@ mod tests {
+@@ -1566,6 +1580,7 @@ mod tests {
              auto_cleanup_interval_secs: 86_400,
              health_check_interval_secs: 300,
              backend_type: "auto".to_string(),
@@ -1281,7 +1276,7 @@ index 910ea9e..d6f6cc0 100644
              img_size: 30,
              img_max_percent: 40.0,
              min_free_bytes: 512 * 1024 * 1024,
-@@ -865,6 +880,39 @@ mod tests {
+@@ -1573,6 +1588,39 @@ mod tests {
          }
      }
  
@@ -1322,10 +1317,10 @@ index 910ea9e..d6f6cc0 100644
      // call tokio::fs::canonicalize, we can use tempdir to create real paths and
      // test the routing without requiring btrfs.
 diff --git a/src/ws-ckpt/src/crates/daemon/src/snapshot_mgr.rs b/src/ws-ckpt/src/crates/daemon/src/snapshot_mgr.rs
-index eb710e4..f71cfea 100644
+index 52b57fd..6256005 100644
 --- a/src/ws-ckpt/src/crates/daemon/src/snapshot_mgr.rs
 +++ b/src/ws-ckpt/src/crates/daemon/src/snapshot_mgr.rs
-@@ -1264,6 +1264,7 @@ mod tests {
+@@ -1291,6 +1291,7 @@ mod tests {
              auto_cleanup_interval_secs: 86_400,
              health_check_interval_secs: 300,
              backend_type: "auto".to_string(),
@@ -1789,10 +1784,10 @@ index 0000000..7aa3c49
 +    assert_eq!(std::fs::read(path).unwrap(), b"{invalid manifest");
 +}
 diff --git a/src/ws-ckpt/src/crates/daemon/src/state.rs b/src/ws-ckpt/src/crates/daemon/src/state.rs
-index 57e0aad..4c513a1 100644
+index 5de54af..82989fb 100644
 --- a/src/ws-ckpt/src/crates/daemon/src/state.rs
 +++ b/src/ws-ckpt/src/crates/daemon/src/state.rs
-@@ -1287,6 +1287,7 @@ mod tests {
+@@ -1542,6 +1542,7 @@ mod tests {
              auto_cleanup_interval_secs: 86_400,
              health_check_interval_secs: 300,
              backend_type: "auto".to_string(),
