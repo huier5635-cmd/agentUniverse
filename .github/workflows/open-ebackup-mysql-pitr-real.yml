@@ -59,6 +59,8 @@ jobs:
           docker cp "$OE_MYSQL_CONTAINER:/var/lib/mysql/$current_binlog" "$fixture/pitr-valid.binlog"
           chmod a+r "$fixture/pitr-valid.binlog"
           head -c 3 "$fixture/pitr-valid.binlog" > "$fixture/pitr-corrupt.binlog"
+          mysqlbinlog --no-defaults --disable-log-bin "$fixture/pitr-valid.binlog" > "$fixture/decoded.sql"
+          grep -F 'CREATE DATABASE pitr_fixture' "$fixture/decoded.sql"
           python3 "$validation/database.py" "$source" "$fixture" "$OE_MYSQL_CONTAINER" original
           git apply --check "$validation/pitr.patch"
           git apply "$validation/pitr.patch"

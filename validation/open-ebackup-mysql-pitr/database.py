@@ -1,4 +1,5 @@
 from datetime import datetime
+import logging
 import os
 from pathlib import Path
 import subprocess
@@ -7,6 +8,7 @@ from types import SimpleNamespace
 
 from probe import RestoreError, shared
 
+logging.basicConfig(level=logging.INFO, format="%(message)s")
 fixture = Path(sys.argv[1])
 container = sys.argv[2]
 variant = sys.argv[3]
