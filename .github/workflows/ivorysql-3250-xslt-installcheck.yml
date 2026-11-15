@@ -1,0 +1,68 @@
+name: Validate the exact IvorySQL parallel listener fix
+
+on:
+  push:
+    branches: [ci/ivorysql-3250-xslt-installcheck-20261115]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: huier5635-cmd/IvorySQL
+          ref: 6af2d7ac89d8b52f892afb080c458988022d1b56
+          persist-credentials: false
+      - name: Build the submitted head with XML and XSLT enabled
+        run: |
+          test "$(git rev-parse HEAD)" = 6af2d7ac89d8b52f892afb080c458988022d1b56
+          test "$(git hash-object src/oracle_test/regress/pg_regress.c)" = d99cfbbc802b8d6a27b71aa10b51a42a78a7b26d
+          ivory_prefix="$RUNNER_TEMP/ivory-prefix"
+          printf 'IVORY_PREFIX=%s\n' "$ivory_prefix" >> "$GITHUB_ENV"
+          sudo apt-get update -q
+          sudo apt-get install -y bison flex libreadline-dev zlib1g-dev uuid-dev libicu-dev libxml2-dev libxslt1-dev libcurl4-openssl-dev
+          ./configure --prefix="$ivory_prefix" --with-uuid=e2fs --with-icu --with-libxml --with-libxslt
+          make -j"$(nproc)" world-bin > "$RUNNER_TEMP/build.log" 2>&1 || { tail -n 120 "$RUNNER_TEMP/build.log"; exit 1; }
+          make -j1 install-world-bin > "$RUNNER_TEMP/install.log" 2>&1 || { tail -n 120 "$RUNNER_TEMP/install.log"; exit 1; }
+          "$ivory_prefix/bin/pg_config" --configure
+      - name: Run serial PostgreSQL installcheck-world
+        id: pg_regress
+        run: |
+          export PGHOST
+          PGHOST=$(mktemp -d)
+          export PGPORT=56928
+          cluster="$RUNNER_TEMP/ivory-pg"
+          "$IVORY_PREFIX/bin/initdb" -D "$cluster" -m pg -C normal --auth trust --no-locale
+          "$IVORY_PREFIX/bin/pg_ctl" -D "$cluster" -l "$RUNNER_TEMP/postgres.log" -o "-p $PGPORT -k $PGHOST -c listen_addresses= -c max_prepared_transactions=2" -w start
+          trap '"$IVORY_PREFIX/bin/pg_ctl" -D "$cluster" -m fast -w stop' EXIT
+          if ! make -j1 -k installcheck-world > "$RUNNER_TEMP/pg-world.log" 2>&1; then
+            grep -E 'not ok|Error [0-9]+' "$RUNNER_TEMP/pg-world.log" | tail -n 45 || true
+            tail -n 70 "$RUNNER_TEMP/pg-world.log"
+            exit 1
+          fi
+          grep -E '^ok .* - xml2|tests passed' "$RUNNER_TEMP/pg-world.log" | tail -n 25 || true
+          tail -n 25 "$RUNNER_TEMP/pg-world.log"
+      - name: Run Oracle check-world with temporary servers
+        if: always() && steps.pg_regress.outcome != 'skipped'
+        run: |
+          if ! make -j1 -k oracle-check-world > "$RUNNER_TEMP/oracle-world.log" 2>&1; then
+            grep -E 'not ok|Error [0-9]+' "$RUNNER_TEMP/oracle-world.log" | tail -n 55 || true
+            tail -n 70 "$RUNNER_TEMP/oracle-world.log"
+            exit 1
+          fi
+          grep -E 'tests passed|^ok .* - ivy_xml2' "$RUNNER_TEMP/oracle-world.log" | tail -n 25 || true
+          tail -n 25 "$RUNNER_TEMP/oracle-world.log"
+      - name: Preserve failed-suite details
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ivorysql-3250-regression-details
+          path: |
+            ${{ runner.temp }}/pg-world.log
+            ${{ runner.temp }}/oracle-world.log
+            **/regression.diffs
+          if-no-files-found: warn
