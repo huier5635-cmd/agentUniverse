@@ -25,9 +25,13 @@ fn prefiltered_ranges(
 ) -> fancy_regex::Result<Vec<(usize, usize)>> {
     let mut matches = Vec::new();
     let mut pos = 0;
-    while let Some(candidate) = prefilter.find_from_pos(code, pos)? {
+    while let Some(candidate) = prefilter.find_from_pos(code, pos).inspect_err(|error| {
+        eprintln!("prefilter search from byte {pos} failed: {error:?}");
+    })? {
         let start = candidate.start();
-        if let Some(found) = exact.find_from_pos(code, start)? {
+        if let Some(found) = exact.find_from_pos(code, start).inspect_err(|error| {
+            eprintln!("exact verification at byte {start} failed: {error:?}");
+        })? {
             assert_eq!(found.start(), start, "anchored retry changed start position");
             assert!(found.end() > start, "rule never matches an empty substring");
             matches.push((start, found.end()));
@@ -83,9 +87,18 @@ fn measure_persistence_prefilter_against_current_engine() {
     let mut code = noise.repeat(7_000);
     code.push_str("systemctl enable fixture.service\n");
 
-    let started = Instant::now();
-    let old = ranges(&original, &code);
-    eprintln!("original, {} bytes, {:?}: {old:?}", code.len(), started.elapsed());
+    let boundaries = [r"|\btee\b", r"|(?m:", r"|\bcrontab\b"]
+        .map(|marker| rule.regex.find(marker).unwrap());
+    let ends = [boundaries[0], boundaries[1], boundaries[2], rule.regex.len()];
+    let starts = [0, boundaries[0] + 1, boundaries[1] + 1, boundaries[2] + 1];
+    for ((start, end), name) in starts.into_iter().zip(ends)
+        .zip(["redirect", "tee", "systemctl", "crontab"])
+    {
+        let alternative = compile(&rule.regex[start..end]);
+        let started = Instant::now();
+        let observed = ranges(&alternative, &code);
+        eprintln!("{name}, {:?}: {observed:?}", started.elapsed());
+    }
     let started = Instant::now();
     let actual = prefiltered_ranges(&prefilter, &exact, &code);
     eprintln!("prefilter, {} bytes, {:?}: {actual:?}", code.len(), started.elapsed());
