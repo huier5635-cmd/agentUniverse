@@ -37,12 +37,11 @@ jobs:
               curl --fail --silent --show-error --location \
                 https://repo.mysql.com/yum/mysql-8.4-community/el/9/x86_64/mysql-community-client-8.4.13-1.el9.x86_64.rpm \
                 --output mysql-client.rpm; \
-              rpmkeys --checksig --verbose mysql-client.rpm > signature.txt; \
-              grep 'Signature.*: OK' signature.txt; \
+              printf '%s  mysql-client.rpm\n' a12661d6af9d860ecc81e434b8d93c0b0141b5ad64ffd8631b6ae0e0c272f25f | sha256sum -c -; \
               rpm2cpio mysql-client.rpm | cpio --extract --make-directories --quiet ./usr/bin/mysqlbinlog; \
               install -m 0755 usr/bin/mysqlbinlog /usr/bin/mysqlbinlog; \
               mysqlbinlog --version; \
-              rm -f mysql-client.rpm signature.txt usr/bin/mysqlbinlog; \
+              rm -f mysql-client.rpm usr/bin/mysqlbinlog; \
               microdnf clean all
           DOCKERFILE
           docker run -d --name pitr-source --network none \
