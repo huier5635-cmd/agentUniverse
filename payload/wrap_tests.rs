@@ -109,9 +109,8 @@ fn strips_osc_st_payloads() {
 #[test]
 fn preserves_osc_hyperlink_labels() {
     for terminator in ["\u{7}", "\u{1b}\\"] {
-        let text = format!(
-            "\u{1b}]8;;https://example.invalid{terminator}link 中文\u{1b}]8;;{terminator}"
-        );
+        let text =
+            format!("\u{1b}]8;;https://example.invalid{terminator}link 中文\u{1b}]8;;{terminator}");
         assert_eq!(strip_ansi_escape(&text), "link 中文");
     }
 }
