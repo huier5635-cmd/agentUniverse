@@ -41,7 +41,7 @@ jobs:
           cp engine.rs "$crate/src/engine.rs"
           mkdir -p "$crate/src/engine"
           cp prefilter.rs "$crate/src/engine/prefilter.rs"
-          cp Cargo.toml "$crate/Cargo.toml"
+          cp scanner-Cargo.toml "$crate/Cargo.toml"
           cd "$v2"
           python3 - <<'PY'
           from pathlib import Path
