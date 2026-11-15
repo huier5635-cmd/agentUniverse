@@ -1,7 +1,0 @@
-name: "custom_llm_invocation_sink"
-description: "custom_llm_invocation_sink"
-file_prefix: 'llm'
-metadata:
-  type: 'LOG_SINK'
-  module: 'agentuniverse.base.util.logging.log_sink.llm_invocation_log_sink'
-  class: 'LLMInvocationLogSink'

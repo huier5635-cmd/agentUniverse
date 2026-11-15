@@ -1,0 +1,40 @@
+name: Validate AgentSight vendored source inventory
+on:
+  push:
+    branches: [ci/sight-10037-rpm-20261115]
+permissions:
+  contents: read
+jobs:
+  rpm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: agentic-os-org/ANOLISA
+          ref: 945ebc38aa61711af7390ac01d0a89caed3ce631
+          path: source
+          persist-credentials: false
+      - name: Reproduce the stale inventory and verify the correction
+        shell: bash
+        working-directory: source
+        run: |
+          set -euo pipefail
+          chmod +x src/agentsight/scripts/build-enforcer.sh
+          if bash src/agentsight/scripts/test-rpm-packaging.sh > ../original.log 2>&1; then
+            echo 'Expected stale inventory failure'
+            exit 1
+          fi
+          grep -F 'stale source inventory: src/target_identity.rs' ../original.log
+          cp ../payload/build-enforcer.sh src/agentsight/scripts/build-enforcer.sh
+          cp ../payload/0013-resolve-target-kernel-identity.patch src/agentsight/patches/actplane/
+          chmod +x src/agentsight/scripts/build-enforcer.sh
+          fixture=$(mktemp -d)
+          git init -q "$fixture"
+          git -C "$fixture" apply --unidiff-zero --include=bpf/src/target_identity.rs "$PWD/src/agentsight/patches/actplane/0013-resolve-target-kernel-identity.patch"
+          cmp "$fixture/bpf/src/target_identity.rs" src/agentsight/crates/ebpf-ifc-engine/src/target_identity.rs
+          git diff --check
+          bash src/agentsight/scripts/test-rpm-packaging.sh
