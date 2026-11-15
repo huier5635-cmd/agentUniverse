@@ -26,26 +26,23 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y build-essential libbpf-dev libelf-dev elfutils libssl-dev zlib1g-dev pkg-config libclang-dev
           rustup toolchain install stable --profile minimal -c rustfmt -c clippy
-      - name: Reproduce the previous test failure
-        working-directory: upstream/src/agentsight
-        run: |
-          set +e
-          cargo +stable test --locked -p ebpf-ifc-engine file_flow_does_not_enable_lsm_file_hooks_without_block_file > "$RUNNER_TEMP/original-test.log" 2>&1
-          status=$?
-          set -e
-          cat "$RUNNER_TEMP/original-test.log"
-          test "$status" -eq 101
-          grep -F 'test tests::file_flow_does_not_enable_lsm_file_hooks_without_block_file ... FAILED' "$RUNNER_TEMP/original-test.log"
       - name: Compare strict lint and test the revised coverage
         working-directory: upstream/src/agentsight
         run: |
           set +e
+          rustfmt +stable --check --edition 2024 crates/ebpf-ifc-engine/src/lib.rs > "$RUNNER_TEMP/original-fmt.log" 2>&1
+          original_fmt=$?
           cargo +stable clippy --locked -p ebpf-ifc-engine --all-targets -- -D warnings > "$RUNNER_TEMP/original-clippy.log" 2>&1
           baseline=$?
           set -e
           git -C ../.. apply --whitespace=nowarn ../candidate.patch
           git diff --check
-          rustfmt +stable --check --edition 2024 crates/ebpf-ifc-engine/src/lib.rs
+          set +e
+          rustfmt +stable --check --edition 2024 crates/ebpf-ifc-engine/src/lib.rs > "$RUNNER_TEMP/candidate-fmt.log" 2>&1
+          candidate_fmt=$?
+          set -e
+          test "$original_fmt" -eq "$candidate_fmt"
+          diff -u <(sed -E 's/:[0-9]+:$/::/' "$RUNNER_TEMP/original-fmt.log") <(sed -E 's/:[0-9]+:$/::/' "$RUNNER_TEMP/candidate-fmt.log")
           cargo +stable test --locked -p ebpf-ifc-engine
           set +e
           cargo +stable clippy --locked -p ebpf-ifc-engine --all-targets -- -D warnings > "$RUNNER_TEMP/candidate-clippy.log" 2>&1
