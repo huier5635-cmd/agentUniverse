@@ -28,6 +28,7 @@ jobs:
           ./configure --prefix="$IVORY_PREFIX" --without-icu --with-uuid=e2fs --with-libxml
           make -j"$(nproc)" world-bin > "$RUNNER_TEMP/ivory-build.log" 2>&1 || { tail -n 120 "$RUNNER_TEMP/ivory-build.log"; exit 1; }
           make -j"$(nproc)" install-world-bin > "$RUNNER_TEMP/ivory-install.log" 2>&1 || { tail -n 120 "$RUNNER_TEMP/ivory-install.log"; exit 1; }
+          make -j"$(nproc)" install >> "$RUNNER_TEMP/ivory-install.log" 2>&1 || { tail -n 120 "$RUNNER_TEMP/ivory-install.log"; exit 1; }
           make -C src/oracle_test/regress pg_regress
       - name: Reproduce and validate the concurrent runs
         working-directory: source

@@ -29,6 +29,12 @@ def check(name):
     )
     print(name, result.returncode, result.stdout, flush=True)
     (evidence / (name + ".log")).write_text(result.stdout)
+    for name_in_log in ("initdb.log", "postmaster.log"):
+        log_path = path / "log" / name_in_log
+        if log_path.is_file():
+            (evidence / (name + "-" + name_in_log)).write_bytes(log_path.read_bytes())
+            if result.returncode != 0:
+                print(log_path.read_text()[-4000:], flush=True)
     log = path / "log/postmaster.log"
     if log.exists():
         detail = log.read_text()
