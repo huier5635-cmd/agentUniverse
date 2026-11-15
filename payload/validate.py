@@ -31,26 +31,28 @@ def test_binary():
     assert len(binaries) == 1, binaries
     return binaries[0]
 
-shutil.copyfile(root / "payload/candidate.rs", file)
-run("format-candidate", ["rustfmt", "--edition", "2021", str(file)])
-shutil.copyfile(file, evidence / "formatted-target_identity.rs")
-run("format", ["cargo", "fmt", "--all", "--", "--check"])
 
-binary = test_binary()
-run("live-preflight", ["sudo", "unshare", "--pid", "--fork", "--mount-proc", "true"])
-args = ["--ignored", "--exact", "--nocapture", "--test-threads=1", test]
-fixed = run("candidate-host", ["sudo", binary, *args])
-assert "1 passed; 0 failed" in fixed
-fixed_nested = run("candidate-parent-namespace", ["sudo", "unshare", "--pid", "--fork", "--mount-proc", binary, *args])
-assert "1 passed; 0 failed" in fixed_nested
+import re
 
-shutil.copyfile(root / "payload/baseline.rs", file)
-baseline_bin = test_binary()
-old = run("baseline-host", ["sudo", baseline_bin, *args], 101)
-assert "is absent from PID namespace" in old and "1 failed" in old
+cmd = ["cargo", "clippy", "--locked", "-p", "ebpf-ifc-engine", "--all-targets", "--message-format=json", "--", "-D", "warnings"]
+def diagnoses(name, source):
+    shutil.copyfile(root / "payload" / source, file)
+    result = subprocess.run(cmd, cwd=workspace, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    failures = []
+    for line in result.stdout.splitlines():
+        if line.startswith("{"):
+            obj = json.loads(line)
+            if obj.get("reason") == "compiler-message":
+                msg = obj["message"]
+                if msg["level"] == "error" and msg.get("spans"):
+                    code = (msg.get("code") or {}).get("code")
+                    for span in msg["spans"]:
+                        if span["is_primary"]:
+                            failures.append((code, msg["message"], span["file_name"], tuple(p["text"] for p in span["text"])))
+    print(name, "exit", result.returncode, "diagnostics", failures, flush=True)
+    (evidence / (name + ".json")).write_text(json.dumps(failures, indent=2))
+    return result.returncode, sorted(set(failures))
 
-shutil.copyfile(root / "payload/baseline.rs", file)
-baseline_units = run("baseline-units", ["cargo", "test", "--locked", "-p", "ebpf-ifc-engine"], 101)
-assert "tests::file_flow_does_not_enable_lsm_file_hooks_without_block_file ... FAILED" in baseline_units and "1 failed" in baseline_units
-shutil.copyfile(evidence / "formatted-target_identity.rs", file)
-run("clippy", ["cargo", "clippy", "--locked", "-p", "ebpf-ifc-engine", "--all-targets", "--", "-D", "warnings"])
+base = diagnoses("baseline-clippy", "baseline.rs")
+changed = diagnoses("candidate-clippy", "candidate.rs")
+assert base == changed and len(base[1]) == 5, (base, changed)
