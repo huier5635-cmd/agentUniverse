@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 12
     env:
       TZ: UTC
-      MYSQL_IMAGE: mysql:8.4.13
+      MYSQL_IMAGE: mysql:8.4.13@sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902
       UPSTREAM: 96ecbf1228f9e8c8a9baedcc4722ea06f61ea74b
       PITR_TARGET_PASSWORD: target-only-test-password
     steps:
@@ -28,9 +28,26 @@ jobs:
           mkdir -p "$fixture/valid" "$RUNNER_TEMP/mysql-tools"
           docker pull "$MYSQL_IMAGE"
           docker image inspect "$MYSQL_IMAGE" --format '{{join .RepoDigests " "}}'
+          docker build --build-arg BASE_IMAGE="$MYSQL_IMAGE" -t pitr-mysql-with-binlog - <<'DOCKERFILE'
+          ARG BASE_IMAGE
+          FROM ${BASE_IMAGE}
+          RUN set -eux; \
+              microdnf install -y cpio rpm; \
+              cd /tmp; \
+              curl --fail --silent --show-error --location \
+                https://repo.mysql.com/yum/mysql-8.4-community/el/9/x86_64/mysql-community-client-8.4.13-1.el9.x86_64.rpm \
+                --output mysql-client.rpm; \
+              rpmkeys --checksig --verbose mysql-client.rpm > signature.txt; \
+              grep 'Signature.*: OK' signature.txt; \
+              rpm2cpio mysql-client.rpm | cpio --extract --make-directories --quiet ./usr/bin/mysqlbinlog; \
+              install -m 0755 usr/bin/mysqlbinlog /usr/bin/mysqlbinlog; \
+              mysqlbinlog --version; \
+              rm -f mysql-client.rpm signature.txt usr/bin/mysqlbinlog; \
+              microdnf clean all
+          DOCKERFILE
           docker run -d --name pitr-source --network none \
             -e MYSQL_ROOT_PASSWORD=source-only-test-password -e TZ=UTC \
-            -v "$fixture:$fixture:ro" "$MYSQL_IMAGE" \
+            -v "$fixture:$fixture:ro" pitr-mysql-with-binlog \
             --server-id=31 --log-bin=mysql-bin --binlog-format=ROW --default-time-zone=+00:00
           docker run -d --name pitr-target --network none \
             -e "MYSQL_ROOT_PASSWORD=$PITR_TARGET_PASSWORD" -e MYSQL_ROOT_HOST=127.0.0.1 -e TZ=UTC \
@@ -58,6 +75,7 @@ jobs:
           source_sql 'INSERT INTO pitr_fixture.events VALUES (2); FLUSH BINARY LOGS'
           docker cp "pitr-source:/var/lib/mysql/$filename" "$fixture/valid/$filename"
           chmod a+r "$fixture/valid/$filename"
+          docker exec pitr-source mysqlbinlog --version
           docker exec pitr-source mysqlbinlog --no-defaults --base64-output=DECODE-ROWS \
             --verbose "$fixture/valid/$filename" > "$RUNNER_TEMP/decoded-binlog.log"
           grep -E '^#2[0-9]{5} |^### INSERT INTO|^###   @1=' "$RUNNER_TEMP/decoded-binlog.log"
