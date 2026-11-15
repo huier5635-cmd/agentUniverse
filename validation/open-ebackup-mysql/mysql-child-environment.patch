@@ -1,0 +1,22 @@
+diff --git a/src/AppPlugins/database/applications/mysql/src/utils/common_func.py b/src/AppPlugins/database/applications/mysql/src/utils/common_func.py
+index bc111e0e..2fc4face 100755
+--- a/src/AppPlugins/database/applications/mysql/src/utils/common_func.py
++++ b/src/AppPlugins/database/applications/mysql/src/utils/common_func.py
+@@ -484,12 +484,13 @@ def get_value(param, key, default_value=""):
+ def exec_cmd_spawn(cmd, passwd, library_path="", xtrabackup_cmd=False):
+     child = None
+     try:
++        env = os.environ.copy()
+         if xtrabackup_cmd and library_path:
+-            os.environ['LD_LIBRARY_PATH'] = library_path
++            env['LD_LIBRARY_PATH'] = library_path
+         if not xtrabackup_cmd:
+-            os.environ['LD_LIBRARY_PATH'] = ""
+-        log.info(f"library_path:{os.environ.get('LD_LIBRARY_PATH', '')}")
+-        child = pexpect.spawn(cmd, timeout=None, env=(os.environ.copy()))
++            env['LD_LIBRARY_PATH'] = ""
++        log.info(f"library_path:{env.get('LD_LIBRARY_PATH', '')}")
++        child = pexpect.spawn(cmd, timeout=None, env=env)
+     except Exception as exception_str:
+         log.exception(exception_str)
+         log.error(f"Spawn except an exception.")

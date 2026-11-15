@@ -1,0 +1,46 @@
+name: open-eBackup MySQL PTY regression
+on:
+  push:
+    branches: [ci/open-ebackup-mysql-libpath-20261115]
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
+    env:
+      UPSTREAM_BASE: 96ecbf1228f9e8c8a9baedcc4722ea06f61ea74b
+      SOURCE: src/AppPlugins/database/applications/mysql/src/utils/common_func.py
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Pin upstream, compile source, compare real PTY executions
+        shell: bash
+        run: |
+          set -euo pipefail
+          payload="$GITHUB_WORKSPACE/validation/open-ebackup-mysql"
+          git init "$RUNNER_TEMP/open-eBackup"
+          cd "$RUNNER_TEMP/open-eBackup"
+          git remote add origin https://gitcode.com/eBackup/open-eBackup.git
+          git fetch --no-tags --depth=1 --filter=blob:none origin "$UPSTREAM_BASE"
+          test "$(git rev-parse FETCH_HEAD)" = "$UPSTREAM_BASE"
+          mkdir -p "$(dirname "$SOURCE")"
+          git show "$UPSTREAM_BASE:$SOURCE" > "$SOURCE"
+          python3 -m venv "$RUNNER_TEMP/oe-venv"
+          python="$RUNNER_TEMP/oe-venv/bin/python"
+          "$python" -m pip install --disable-pip-version-check pexpect==4.9.0 ptyprocess==0.7.0
+          "$python" -m py_compile "$SOURCE"
+          sha256sum -c <<< "993186a6612fe670cabe2e49ef02b56765c525f1e87ea5fb706529821475b098  $payload/mysql-child-environment.patch"
+          set +e
+          timeout 25s "$python" "$payload/test_linux_pty.py" "$SOURCE" > "$RUNNER_TEMP/oe-baseline.log" 2>&1
+          status=$?
+          set -e
+          cat "$RUNNER_TEMP/oe-baseline.log"
+          test "$status" -eq 1
+          grep -F 'FAILED (failures=3)' "$RUNNER_TEMP/oe-baseline.log"
+          test "$(grep -c ' ... FAIL$' "$RUNNER_TEMP/oe-baseline.log")" -eq 3
+          git apply --check "$payload/mysql-child-environment.patch"
+          git apply "$payload/mysql-child-environment.patch"
+          "$python" -m py_compile "$SOURCE"
+          timeout 25s "$python" "$payload/test_linux_pty.py" "$SOURCE"
