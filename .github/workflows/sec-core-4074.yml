@@ -1,0 +1,29 @@
+name: Sec-Core scan candidate prefilter probe
+
+on:
+  push:
+    branches: [ci/sec-core-4074-prefilter-20261115]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: agentic-os-org/ANOLISA
+          ref: 95dd38ee23ece0198d37605ec61be2145156f127
+          path: source
+          persist-credentials: false
+      - name: Compare real scanner regex behavior
+        run: |
+          cp engine-prefilter-probe.rs source/src/agent-sec-core/v2/crates/asc-capability-code-scan/tests/engine_prefilter_probe.rs
+          cd source/src/agent-sec-core/v2
+          rustup toolchain install 1.93.0 --profile minimal
+          cargo +1.93.0 test --locked -p asc-capability-code-scan --test engine_prefilter_probe -- --nocapture --test-threads=1
