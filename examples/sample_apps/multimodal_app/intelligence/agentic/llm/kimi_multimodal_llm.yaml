@@ -1,9 +1,0 @@
-name: 'kimi_multimodal_llm'
-description: 'kimi multimodal llm'
-model_name: 'moonshot-v1-128k-vision-preview'
-max_tokens: 2000
-streaming: True
-metadata:
-  type: 'LLM'
-  module: 'agentuniverse.llm.default.kimi_openai_style_llm'
-  class: 'KIMIOpenAIStyleLLM'

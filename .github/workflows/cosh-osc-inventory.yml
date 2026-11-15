@@ -1,0 +1,34 @@
+name: Validate cosh OSC test placement
+on:
+  push:
+    branches: [ci/cosh-osc-inventory-20261115]
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: agentic-os-org/ANOLISA
+          ref: fc3cf6930c8d9efef63618c7928d760f975e056a
+          path: source
+          persist-credentials: false
+          sparse-checkout: src/cosh-ng
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: source/src/cosh-ng
+      - run: python3 payload/validate.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cosh-osc-inventory-evidence
+          path: evidence
+          if-no-files-found: ignore

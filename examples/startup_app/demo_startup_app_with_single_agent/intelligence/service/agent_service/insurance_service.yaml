@@ -1,5 +1,0 @@
-name: 'insurance_agent_service'
-description: 'demo react service of demo agent'
-agent: 'insurance_agent'
-metadata:
-  type: 'SERVICE'
