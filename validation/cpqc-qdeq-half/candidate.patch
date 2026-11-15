@@ -1,0 +1,70 @@
+diff --git a/src/kaiwu/torch_plugin/qdeq.py b/src/kaiwu/torch_plugin/qdeq.py
+index 3fba0e1..8f4f6e0 100644
+--- a/src/kaiwu/torch_plugin/qdeq.py
++++ b/src/kaiwu/torch_plugin/qdeq.py
+@@ -134,22 +134,26 @@ def _anderson_solver(
+     x_hist[:, 1] = f_hist[:, 0]
+     f_hist[:, 1] = func(f_hist[:, 0].reshape_as(z0)).reshape(bsz, -1)
+ 
++    # linalg.solve needs at least float32 for real inputs. Keep the history
++    # and the fixed-point map in their original dtype.
++    solve_dtype = torch.float32 if z0.dtype in (torch.float16, torch.bfloat16) else z0.dtype
+     # Bordered system whose solution gives mixing weights summing to one.
+-    h_mat = torch.zeros(bsz, m + 1, m + 1, dtype=z0.dtype, device=z0.device)
++    h_mat = torch.zeros(bsz, m + 1, m + 1, dtype=solve_dtype, device=z0.device)
+     h_mat[:, 0, 1:] = h_mat[:, 1:, 0] = 1
+-    rhs = torch.zeros(bsz, m + 1, 1, dtype=z0.dtype, device=z0.device)
++    rhs = torch.zeros(bsz, m + 1, 1, dtype=solve_dtype, device=z0.device)
+     rhs[:, 0] = 1
+ 
+     best_z, best_res, nstep = z0, float("inf"), 0
+     for k in range(2, max(threshold, 3)):
+         n = min(k, m)
+         # alpha = argmin ||sum_i alpha_i (f(x_i) - x_i)||^2  s.t.  sum_i alpha_i = 1.
+-        g_mat = f_hist[:, :n] - x_hist[:, :n]
+-        eye = torch.eye(n, dtype=z0.dtype, device=z0.device)[None]
++        images = f_hist[:, :n].to(dtype=solve_dtype)
++        g_mat = images - x_hist[:, :n].to(dtype=solve_dtype)
++        eye = torch.eye(n, dtype=solve_dtype, device=z0.device)[None]
+         h_mat[:, 1 : n + 1, 1 : n + 1] = g_mat @ g_mat.transpose(1, 2) + config.anderson_lam * eye
+         alpha = torch.linalg.solve(h_mat[:, : n + 1, : n + 1], rhs[:, : n + 1])[:, 1 : n + 1, 0]
+         # The next iterate mixes the stored images and overwrites the oldest slot.
+-        x_hist[:, k % m] = (alpha[:, None] @ f_hist[:, :n])[:, 0]
++        x_hist[:, k % m] = (alpha[:, None] @ images)[:, 0]
+         f_hist[:, k % m] = func(x_hist[:, k % m].reshape_as(z0)).reshape(bsz, -1)
+ 
+         nstep = k - 1
+diff --git a/tests/test_qdeq.py b/tests/test_qdeq.py
+index cdebb77..8e88460 100644
+--- a/tests/test_qdeq.py
++++ b/tests/test_qdeq.py
+@@ -128,6 +128,29 @@ class TestImplicitGradient(unittest.TestCase):
+         self.assertFalse(out.requires_grad)
+         self.assertNotIn("backward_nstep", deq.get_last_stats())
+ 
++    def test_half_precision_backward_preserves_dtype_and_implicit_gradient(self):
++        """A float32 mixing solve supports fp16 and bf16 model tensors."""
++
++        class Contraction(torch.nn.Module):
++            """The fixed point of 0.5 * z + x is exactly 2 * x."""
++
++            def forward(self, z, x):
++                """Evaluate the map without changing either tensor's dtype."""
++                if z.dtype != x.dtype:
++                    raise AssertionError(f"expected {x.dtype}, got {z.dtype}")
++                return 0.5 * z + x
++
++        for dtype in (torch.float16, torch.bfloat16):
++            with self.subTest(dtype=dtype):
++                x = torch.tensor([[0.5, 1.0], [-1.0, 2.0]], dtype=dtype, requires_grad=True)
++                deq = QDEQ(Contraction(), LocalSearchSampler(), solve_config())
++                # Anchor at the exact fixed point to isolate the backward solve.
++                out = deq(x, z0=2 * x.detach())
++                torch.testing.assert_close(out, 2 * x)
++                out.sum().backward()
++                torch.testing.assert_close(x.grad, torch.full_like(x, 2.0), rtol=0, atol=0.02)
++                self.assertGreater(deq.get_last_stats()["backward_nstep"], 0)
++
+     def test_jacobian_loss_keeps_implicit_gradient(self):
+         """Adding the regulariser leaves the implicit gradient of the output unchanged."""
+         deq = QDEQ(self.layer, LocalSearchSampler(), solve_config(jac_loss_vecs=2))

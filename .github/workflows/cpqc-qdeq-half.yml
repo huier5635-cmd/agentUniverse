@@ -1,0 +1,50 @@
+name: CPQC QDEQ half precision
+on:
+  push:
+    branches: [ci/cpqc-qdeq-half-20261115]
+permissions:
+  contents: read
+jobs:
+  cpu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      KPP_STATS_ENABLED: '0'
+      CUDA_VISIBLE_DEVICES: ''
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: qboson/kaiwu-pytorch-plugin
+          ref: cbef8d86b297963326b92eeabd9d32be2a640c21
+          path: upstream
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Run CPU dtype negative control and QDEQ suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          patch="$GITHUB_WORKSPACE/validation/cpqc-qdeq-half/candidate.patch"
+          cd upstream
+          test "$(git rev-parse HEAD)" = cbef8d86b297963326b92eeabd9d32be2a640c21
+          python -m pip install torch==2.7.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -e . kaiwu==1.4.3 pytest==8.3.5 pylint==3.3.7
+          python -m pip check
+          python -c 'from pathlib import Path; import torch, kaiwu.torch_plugin as p; print(torch.__version__, p.__file__); assert "+cpu" in torch.__version__; assert Path(p.__file__).resolve().is_relative_to(Path("src").resolve())'
+          git apply --check "$patch"
+          git apply --include=tests/test_qdeq.py "$patch"
+          set +e
+          python -m unittest discover -s tests -p test_qdeq.py -k test_half_precision_backward_preserves_dtype_and_implicit_gradient -v 2>&1 | tee "$RUNNER_TEMP/qdeq-half-baseline.log"
+          baseline=${PIPESTATUS[0]}
+          set -e
+          test "$baseline" -eq 1
+          grep -Ei 'not implemented.*(Half|BFloat16)|Low precision dtypes not supported' "$RUNNER_TEMP/qdeq-half-baseline.log"
+          test "$(grep -c '^ERROR:.*dtype=torch\.' "$RUNNER_TEMP/qdeq-half-baseline.log")" -eq 2
+          git apply --include=src/kaiwu/torch_plugin/qdeq.py "$patch"
+          git diff --check
+          python -m pytest tests/test_qdeq.py -q
+          python -m pylint src/kaiwu/torch_plugin/qdeq.py
