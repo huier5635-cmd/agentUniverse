@@ -1,0 +1,54 @@
+name: Verify frozen AgentSight DSH dependencies
+
+on:
+  push:
+    branches:
+      - ci/agentsight-dsh-frozen-lockfile-20261115
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fixture
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: agentic-os-org/ANOLISA
+          ref: 8ce82e14ab11efee26d71b7986d0fdf68543370b
+          path: upstream
+          sparse-checkout: src/agentsight/dsh-plugin
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '11.25.0'
+      - name: Test exact lockfile and unchanged plugin
+        working-directory: upstream/src/agentsight/dsh-plugin
+        run: |
+          set -euo pipefail
+          cp "$GITHUB_WORKSPACE/fixture/ci-artifacts/agentsight-dsh-frozen/pnpm-lock.yaml" pnpm-lock.yaml
+          expected=0b70321854d9909b47785c6ef00caeafaa852ebd
+          test "$(git hash-object pnpm-lock.yaml)" = "$expected"
+          test "$(git hash-object package.json)" = 56082555c40ef6017d63e0308b48f3b29fd8a68c
+          test "$(git hash-object test/status.test.mjs)" = 007d305597978057f43c861a71ec8ba63d2ceb00
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm test
+          test "$(git hash-object pnpm-lock.yaml)" = "$expected"
+      - name: Confirm manifest drift is rejected
+        working-directory: upstream/src/agentsight/dsh-plugin
+        run: |
+          set -euo pipefail
+          node -e 'const fs = require("node:fs"); const p = JSON.parse(fs.readFileSync("package.json", "utf8")); p.devDependencies.typescript = "5.9.3"; fs.writeFileSync("package.json", JSON.stringify(p));'
+          if pnpm install --frozen-lockfile --ignore-scripts >frozen.err 2>&1; then
+            cat frozen.err
+            exit 1
+          fi
+          grep 'ERR_PNPM_OUTDATED_LOCKFILE' frozen.err
