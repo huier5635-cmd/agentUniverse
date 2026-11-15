@@ -1,0 +1,142 @@
+name: Check open-eBackup rotated-log replay in one real MySQL session
+
+on:
+  push:
+    branches: [ci/open-ebackup-pitr-single-session-20261115]
+
+permissions:
+  contents: read
+
+jobs:
+  replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      TZ: UTC
+      MYSQL_IMAGE: mysql:8.4.13@sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902
+      UPSTREAM: 96ecbf1228f9e8c8a9baedcc4722ea06f61ea74b
+      PITR_TARGET_PASSWORD: target-only-test-password
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Start two private MySQL test instances and generate a binary log
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/pitr-fixture"
+          mkdir -p "$fixture/valid" "$RUNNER_TEMP/mysql-tools"
+          docker pull "$MYSQL_IMAGE"
+          docker image inspect "$MYSQL_IMAGE" --format '{{join .RepoDigests " "}}'
+          docker build --build-arg BASE_IMAGE="$MYSQL_IMAGE" -t pitr-mysql-with-binlog - <<'DOCKERFILE'
+          ARG BASE_IMAGE
+          FROM ${BASE_IMAGE}
+          RUN set -eux; \
+              microdnf install -y cpio rpm; \
+              cd /tmp; \
+              curl --fail --silent --show-error --location \
+                https://repo.mysql.com/yum/mysql-8.4-community/el/9/x86_64/mysql-community-client-8.4.13-1.el9.x86_64.rpm \
+                --output mysql-client.rpm; \
+              printf '%s  mysql-client.rpm\n' a12661d6af9d860ecc81e434b8d93c0b0141b5ad64ffd8631b6ae0e0c272f25f | sha256sum -c -; \
+              rpm2cpio mysql-client.rpm | cpio --extract --make-directories --quiet ./usr/bin/mysqlbinlog; \
+              install -m 0755 usr/bin/mysqlbinlog /usr/bin/mysqlbinlog; \
+              mysqlbinlog --version; \
+              rm -f mysql-client.rpm usr/bin/mysqlbinlog; \
+              microdnf clean all
+          DOCKERFILE
+          docker run -d --name pitr-source --network none \
+            -e MYSQL_ROOT_PASSWORD=source-only-test-password -e TZ=UTC \
+            -v "$fixture:$fixture:ro" pitr-mysql-with-binlog \
+            --server-id=31 --log-bin=mysql-bin --binlog-format=STATEMENT --default-time-zone=+00:00
+          docker run -d --name pitr-target --network none \
+            -e "MYSQL_ROOT_PASSWORD=$PITR_TARGET_PASSWORD" -e MYSQL_ROOT_HOST=127.0.0.1 -e TZ=UTC \
+            "$MYSQL_IMAGE" --server-id=32 --default-time-zone=+00:00
+          source_sql() { docker exec pitr-source mysql -uroot -psource-only-test-password -NB -e "$1"; }
+          target_sql() { docker exec pitr-target mysql -uroot -h127.0.0.1 "-p$PITR_TARGET_PASSWORD" -NB -e "$1"; }
+          for _ in {1..75}; do
+            if source_sql 'SELECT 1' > /dev/null 2>&1 && target_sql 'SELECT 1' > /dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+          source_sql 'SELECT VERSION()'
+          target_sql 'SELECT VERSION()'
+          init='CREATE DATABASE pitr_fixture; CREATE TABLE pitr_fixture.events (id INT PRIMARY KEY, payload MEDIUMTEXT)'
+          source_sql "$init"
+          target_sql "$init"
+          source_sql 'FLUSH BINARY LOGS'
+          snapshot_payload=$(head -c 65536 /dev/zero | tr '\0' x)
+          snapshot_row="USE pitr_fixture; INSERT INTO events VALUES (0, '$snapshot_payload')"
+          source_sql "$snapshot_row"
+          target_sql "$snapshot_row"
+          position_info=$(source_sql 'SHOW BINARY LOG STATUS')
+          filename=$(cut -f1 <<< "$position_info")
+          position=$(cut -f2 <<< "$position_info")
+          [[ $filename =~ ^mysql-bin\.[0-9]+$ && $position =~ ^[0-9]+$ ]]
+          snapshot=$(date +%s)
+          source_sql "USE pitr_fixture; INSERT INTO events VALUES (1, 'first log'); CREATE TEMPORARY TABLE replay_tmp (id INT); INSERT INTO replay_tmp VALUES (2); FLUSH BINARY LOGS; INSERT INTO events SELECT id, 'second log' FROM replay_tmp; DROP TEMPORARY TABLE replay_tmp"
+          second=$(source_sql 'SHOW BINARY LOG STATUS' | cut -f1)
+          [[ $second =~ ^mysql-bin\.[0-9]+$ && $second != "$filename" ]]
+          cutoff=$(($(date +%s) + 2))
+          sleep 4
+          source_sql "INSERT INTO pitr_fixture.events VALUES (3, 'after cutoff'); FLUSH BINARY LOGS"
+          for log in "$filename" "$second"; do
+            docker cp "pitr-source:/var/lib/mysql/$log" "$fixture/valid/$log"
+            chmod a+r "$fixture/valid/$log"
+          done
+          second_size=$(stat -c%s "$fixture/valid/$second")
+          printf 'backup position=%s, second log size=%s\n' "$position" "$second_size"
+          test "$position" -gt "$second_size"
+          docker exec pitr-source mysqlbinlog --version
+          docker exec pitr-source mysqlbinlog --no-defaults --base64-output=DECODE-ROWS \
+            --verbose "$fixture/valid/$filename" "$fixture/valid/$second" > "$RUNNER_TEMP/decoded-binlog.log"
+          grep -Ei "create temporary table replay_tmp|insert into events select id" "$RUNNER_TEMP/decoded-binlog.log"
+          cat > "$RUNNER_TEMP/mysql-tools/mysqlbinlog" <<'SH'
+          #!/usr/bin/env bash
+          exec docker exec -i pitr-source mysqlbinlog "$@"
+          SH
+          cat > "$RUNNER_TEMP/mysql-tools/mysql" <<'SH'
+          #!/usr/bin/env bash
+          exec docker exec -i pitr-target mysql "$@"
+          SH
+          chmod +x "$RUNNER_TEMP/mysql-tools/mysqlbinlog" "$RUNNER_TEMP/mysql-tools/mysql"
+          printf '%s\n' "$RUNNER_TEMP/mysql-tools" >> "$GITHUB_PATH"
+          printf 'PITR_FIXTURE=%s\nPITR_BINLOG=%s\nPITR_SECOND_BINLOG=%s\nPITR_START_POSITION=%s\nPITR_SNAPSHOT=%s\nPITR_CUTOFF=%s\n' \
+            "$fixture" "$filename" "$second" "$position" "$snapshot" "$cutoff" >> "$GITHUB_ENV"
+      - name: Verify offset, temporary tables and failures using the real replay path
+        shell: bash
+        run: |
+          set -euo pipefail
+          source="$RUNNER_TEMP/open-eBackup"
+          validation="$GITHUB_WORKSPACE/validation/open-ebackup-pitr-real-mysql"
+          git init --quiet "$source"
+          git -C "$source" fetch --quiet --depth=1 --no-tags --filter=blob:none https://gitcode.com/eBackup/open-eBackup.git "$UPSTREAM"
+          test "$(git -C "$source" rev-parse FETCH_HEAD)" = "$UPSTREAM"
+          cd "$source"
+          prefix=src/AppPlugins/database/applications
+          for path in common/common.py common/const.py mysql/src/utils/restore_func.py mysql/src/service/restore/log_restore.py; do
+            target="$prefix/$path"
+            mkdir -p "$(dirname "$target")"
+            git show "$UPSTREAM:$target" > "$target"
+          done
+          base_patch="$validation/pitr.patch"
+          test "$(sha256sum "$base_patch" | cut -d' ' -f1)" = 5e676352161f14a5b77ab801ceeeffb1da3a98ad71e57c351f40560c37009198
+          git apply --check "$base_patch"
+          git apply "$base_patch"
+          test "$(git hash-object "$prefix/common/common.py")" = 7789f09b834088314265111a505864a6fcff3ce5
+          test "$(git hash-object "$prefix/mysql/src/service/restore/log_restore.py")" = da20fd49205ff9b8393c6ca0194fb16e3fecb5ca
+          python3 "$validation/replay-session.py" "$source" original
+          git apply --check "$validation/log-offset.patch"
+          git apply "$validation/log-offset.patch"
+          test "$(git hash-object "$prefix/mysql/src/service/restore/log_restore.py")" = d5ff2c98110d51f16380c46e71f1d6fb4a5c8f20
+          python3 "$validation/replay-session.py" "$source" offset-only
+          git apply -R "$validation/log-offset.patch"
+          git apply --check "$validation/single-session.patch"
+          git apply "$validation/single-session.patch"
+          test "$(git hash-object "$prefix/mysql/src/service/restore/log_restore.py")" = d4e444a483801ea35c7ef7c9fd05a79b2999f798
+          python3 "$validation/replay-session.py" "$source" candidate
+      - name: Clean up fixture containers
+        if: always()
+        shell: bash
+        run: |
+          docker rm -f pitr-source pitr-target > /dev/null 2>&1 || true
