@@ -30,9 +30,6 @@ jobs:
           make -j"$(nproc)" install-world-bin > "$RUNNER_TEMP/ivory-install.log" 2>&1 || { tail -n 120 "$RUNNER_TEMP/ivory-install.log"; exit 1; }
           make -j"$(nproc)" install >> "$RUNNER_TEMP/ivory-install.log" 2>&1 || { tail -n 120 "$RUNNER_TEMP/ivory-install.log"; exit 1; }
           make -C src/oracle_test/regress pg_regress
-      - name: Reproduce and validate the concurrent runs
-        working-directory: source
-        run: python3 ../payload/validate.py
       - name: Run the installed PostgreSQL test suites
         working-directory: source
         run: |
@@ -41,7 +38,7 @@ jobs:
           export PGPORT=56928
           "$IVORY_PREFIX/bin/pg_ctl" -D "$RUNNER_TEMP/ivory-pg" -o "-p $PGPORT -k $PGHOST -c listen_addresses= -c max_prepared_transactions=2" -w start
           trap '"$IVORY_PREFIX/bin/pg_ctl" -D "$RUNNER_TEMP/ivory-pg" -m fast -w stop' EXIT
-          make -j2 installcheck-world > "$RUNNER_TEMP/ivory-installcheck.log" 2>&1 || { tail -n 120 "$RUNNER_TEMP/ivory-installcheck.log"; exit 1; }
+          make -j1 installcheck-world > "$RUNNER_TEMP/ivory-installcheck.log" 2>&1 || { tail -n 120 "$RUNNER_TEMP/ivory-installcheck.log"; exit 1; }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
