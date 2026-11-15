@@ -1,0 +1,86 @@
+name: open-eBackup Traefik CRD integration
+on:
+  push:
+    branches: [ci/open-ebackup-traefik-712-20261115]
+permissions:
+  contents: read
+jobs:
+  kind:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      UPSTREAM: 96ecbf1228f9e8c8a9baedcc4722ea06f61ea74b
+      PROPOSAL: 8ff7b46ab023a698403cf18acf8e9de5be63dabe
+    steps:
+      - name: Verify the documented commands and official downloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/oe-crd" "$RUNNER_TEMP/oe-bin"
+          cd "$RUNNER_TEMP/oe-crd"
+          git init --quiet source
+          git -C source fetch --no-tags --depth=1 --filter=blob:none https://gitcode.com/huier325/open-eBackup.git "$PROPOSAL"
+          readme='doc/quick_guide/快速入门.md'
+          test "$(git -C source rev-parse "$PROPOSAL:$readme")" = 02311f6301c740b3793277e167c2561dc25a3602
+          git -C source show "$PROPOSAL:$readme" > quick-start.md
+          git -C source fetch --no-tags --depth=1 --filter=blob:none https://gitcode.com/eBackup/open-eBackup.git "$UPSTREAM"
+          git -C source show "$UPSTREAM:$readme" > previous-quick-start.md
+          grep -Fx '    kubectl apply -f crds' previous-quick-start.md
+          grep -Fx '    kubectl apply -k traefik-helm-chart-27.0.2/traefik/crds' quick-start.md
+          grep -F 'kubectl wait --for=condition=Established --timeout=60s' quick-start.md
+          curl --fail --silent --show-error --location --retry 3 \
+            'https://codeload.github.com/traefik/traefik-helm-chart/tar.gz/refs/tags/v27.0.2' -o v27.0.2.tar.gz
+          printf '%s\n' '0ac8958c5d8218f181c39c766f708de29d1fe134f06e27105810b154823d1c0b  v27.0.2.tar.gz' | sha256sum --check
+          tar -xzf v27.0.2.tar.gz
+          cd "$RUNNER_TEMP/oe-bin"
+          kind_release=https://github.com/kubernetes-sigs/kind/releases/download/v0.27.0
+          curl --fail --silent --show-error --location --retry 3 "$kind_release/kind-linux-amd64" -o kind-linux-amd64
+          curl --fail --silent --show-error --location --retry 3 "$kind_release/kind-linux-amd64.sha256sum" -o kind.sha256
+          sha256sum --check kind.sha256
+          mv kind-linux-amd64 kind
+          kubectl_release=https://dl.k8s.io/release/v1.32.2/bin/linux/amd64
+          curl --fail --silent --show-error --location --retry 3 "$kubectl_release/kubectl" -o kubectl
+          curl --fail --silent --show-error --location --retry 3 "$kubectl_release/kubectl.sha256" -o kubectl.sha256
+          printf '%s  kubectl\n' "$(cat kubectl.sha256)" | sha256sum --check
+          chmod +x kind kubectl
+          echo "$RUNNER_TEMP/oe-bin" >> "$GITHUB_PATH"
+      - name: Run the CRD installation on a disposable Kubernetes cluster
+        shell: bash
+        run: |
+          set -euo pipefail
+          export KUBECONFIG="$RUNNER_TEMP/open-ebackup-traefik.kubeconfig"
+          kind create cluster --name oe-traefik --wait 180s \
+            --image kindest/node:v1.32.2@sha256:f226345927d7e348497136874b6d207e0b32cc52154ad8323129352923a3142f
+          trap 'kind delete cluster --name oe-traefik' EXIT
+          kubectl version
+          cd "$RUNNER_TEMP/oe-crd"
+          kubectl get crd -o name > before.txt
+          if grep -q 'traefik.containo.us' before.txt; then
+            echo 'Legacy Traefik CRDs are already installed.'
+            exit 1
+          fi
+          crds=traefik-helm-chart-27.0.2/traefik/crds
+          if kubectl apply -f "$crds" --dry-run=client --validate=false > original.log 2>&1; then
+            cat original.log
+            echo 'The previous command unexpectedly succeeded.'
+            exit 1
+          fi
+          grep -F 'no matches for kind "Kustomization"' original.log
+          kubectl apply -k "$crds" | tee installed.txt
+          test "$(grep -c '^customresourcedefinition.apiextensions.k8s.io/' installed.txt)" -eq 19
+          kubectl wait --for=condition=Established --timeout=60s \
+            crd/ingressroutes.traefik.containo.us \
+            crd/middlewares.traefik.containo.us \
+            crd/serverstransports.traefik.containo.us \
+            crd/tlsoptions.traefik.containo.us \
+            crd/tlsstores.traefik.containo.us
+          kubectl api-resources --api-group=traefik.containo.us -o name | tee discovery.txt
+          for name in ingressroutes middlewares serverstransports tlsoptions tlsstores; do
+            grep -Fx "$name.traefik.containo.us" discovery.txt
+          done
+          kubectl create namespace dpa
+          gateway=src/ProtectManager/component/PM_API_Gateway/IngressRoute/common
+          for manifest in middleware-pm-replace-path-regex.yaml serverstransport-traefik-backend.yaml tls-option-pm-mtls.yaml; do
+            git -C source show "$UPSTREAM:$gateway/$manifest" > "$manifest"
+            kubectl apply --dry-run=server -f "$manifest"
+          done
