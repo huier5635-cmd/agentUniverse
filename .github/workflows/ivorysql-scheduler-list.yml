@@ -1,0 +1,57 @@
+name: Verify IvorySQL scheduler list parsing
+
+on:
+  push:
+    branches: [ci/ivorysql-scheduler-list-20261115]
+
+permissions:
+  contents: read
+
+jobs:
+  oracle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 24
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: validation
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: IvorySQL/IvorySQL
+          ref: 475ab1956568da0e6e796902bf6e13a916396edd
+          path: ivorysql
+          persist-credentials: false
+      - name: Build IvorySQL at the reviewed base
+        working-directory: ivorysql
+        run: |
+          test "$(git rev-parse HEAD)" = 475ab1956568da0e6e796902bf6e13a916396edd
+          sudo apt-get update -q
+          sudo apt-get install -y bison flex libreadline-dev zlib1g-dev uuid-dev libicu-dev
+          ./configure --prefix="$RUNNER_TEMP/ivory-prefix" --with-uuid=e2fs --with-icu
+          make -j"$(nproc)" world-bin > "$RUNNER_TEMP/build.log" 2>&1 || { tail -n 110 "$RUNNER_TEMP/build.log"; exit 1; }
+      - name: Reproduce acceptance of trailing commas on the base
+        working-directory: ivorysql
+        run: |
+          git apply ../validation/validation/ivorysql-scheduler/scheduler-list-regression.patch
+          if make -C contrib/ivorysql_ora oracle-check ORA_REGRESS=dbms_scheduler > "$RUNNER_TEMP/baseline.log" 2>&1; then
+            cat "$RUNNER_TEMP/baseline.log"
+            echo "The baseline unexpectedly passed the new scheduler cases"
+            exit 1
+          fi
+          tail -n 20 "$RUNNER_TEMP/baseline.log"
+          diff_file=contrib/ivorysql_ora/regression.diffs
+          test -s "$diff_file"
+          grep -F -- '-ERROR:  invalid calendar string "FREQ=DAILY;BYHOUR=9,"' "$diff_file"
+          grep -F -- '-ERROR:  invalid calendar string "FREQ=WEEKLY;BYDAY=MON,FRI, ;BYHOUR=9"' "$diff_file"
+      - name: Verify the complete scheduler regression after the parser fix
+        working-directory: ivorysql
+        run: |
+          git apply ../validation/validation/ivorysql-scheduler/scheduler-list.patch
+          git diff --check
+          make -C contrib/ivorysql_ora oracle-check ORA_REGRESS=dbms_scheduler > "$RUNNER_TEMP/fixed.log" 2>&1 || {
+            tail -n 45 "$RUNNER_TEMP/fixed.log"
+            cat contrib/ivorysql_ora/regression.diffs
+            exit 1
+          }
+          tail -n 22 "$RUNNER_TEMP/fixed.log"

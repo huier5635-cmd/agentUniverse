@@ -1,0 +1,32 @@
+diff --git a/contrib/ivorysql_ora/sql/dbms_scheduler.sql b/contrib/ivorysql_ora/sql/dbms_scheduler.sql
+--- a/contrib/ivorysql_ora/sql/dbms_scheduler.sql
++++ b/contrib/ivorysql_ora/sql/dbms_scheduler.sql
+@@ -114,6 +114,10 @@
+   '2026-01-05 00:00:00+00', '2026-07-01 00:00:00+00') AS byday_numeric_sunday;
+ 
+ -- calendar errors
++SELECT sys.ora_dbms_scheduler_evaluate_calendar_string(
++  'FREQ=DAILY;BYHOUR=9,', '2026-01-01 00:00:00+00', '2026-07-01 00:00:00+00');
++SELECT sys.ora_dbms_scheduler_evaluate_calendar_string(
++  'FREQ=WEEKLY;BYDAY=MON,FRI, ;BYHOUR=9', '2026-01-01 00:00:00+00', '2026-07-01 00:00:00+00');
+ SELECT sys.ora_dbms_scheduler_evaluate_calendar_string(
+   'BYHOUR=9', '2026-01-01 00:00:00+00', '2026-07-01 00:00:00+00');
+ SELECT sys.ora_dbms_scheduler_evaluate_calendar_string(
+diff --git a/contrib/ivorysql_ora/expected/dbms_scheduler.out b/contrib/ivorysql_ora/expected/dbms_scheduler.out
+--- a/contrib/ivorysql_ora/expected/dbms_scheduler.out
++++ b/contrib/ivorysql_ora/expected/dbms_scheduler.out
+@@ -221,6 +221,14 @@
+ (1 row)
+ 
+ -- calendar errors
++SELECT sys.ora_dbms_scheduler_evaluate_calendar_string(
++  'FREQ=DAILY;BYHOUR=9,', '2026-01-01 00:00:00+00', '2026-07-01 00:00:00+00');
++ERROR:  invalid calendar string "FREQ=DAILY;BYHOUR=9,"
++DETAIL:  empty element in value list.
++SELECT sys.ora_dbms_scheduler_evaluate_calendar_string(
++  'FREQ=WEEKLY;BYDAY=MON,FRI, ;BYHOUR=9', '2026-01-01 00:00:00+00', '2026-07-01 00:00:00+00');
++ERROR:  invalid calendar string "FREQ=WEEKLY;BYDAY=MON,FRI, ;BYHOUR=9"
++DETAIL:  empty element in value list.
+ SELECT sys.ora_dbms_scheduler_evaluate_calendar_string(
+   'BYHOUR=9', '2026-01-01 00:00:00+00', '2026-07-01 00:00:00+00');
+ ERROR:  invalid calendar string "BYHOUR=9"
