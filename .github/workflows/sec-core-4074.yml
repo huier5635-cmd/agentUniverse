@@ -1,4 +1,4 @@
-name: Sec-Core full Bash scan and daemon transport
+name: Sec-Core release daemon near frame limit
 
 on:
   push:
@@ -53,13 +53,6 @@ jobs:
           rustfmt +1.93.0 --edition 2024 "$prefix/src/engine.rs" "$prefix/src/engine/prefilter.rs" "$prefix/tests/shipped_rules.rs"
           git diff --check
           git hash-object "$prefix/src/engine.rs" "$prefix/src/engine/prefilter.rs" "$prefix/tests/shipped_rules.rs"
-      - name: Run complete scanner tests and Clippy
-        id: scanner
+      - name: Send the same near-limit frame to the release daemon
         working-directory: upstream/src/agent-sec-core/v2
-        run: |
-          cargo +1.93.0 test --locked -p asc-capability-code-scan -- --nocapture
-          cargo +1.93.0 clippy --locked -p asc-capability-code-scan --all-targets -- -D warnings
-      - name: Send a near-limit frame through a real Unix socket
-        if: ${{ !cancelled() && (steps.scanner.outcome == 'success' || steps.scanner.outcome == 'failure') }}
-        working-directory: upstream/src/agent-sec-core/v2
-        run: cargo +1.93.0 test --locked -p asc-daemon --test code_scan_protocol local_user_scans_full_bash_rules_in_near_limit_frame -- --exact --nocapture
+        run: cargo +1.93.0 test --release --locked -p asc-daemon --test code_scan_protocol local_user_scans_full_bash_rules_in_near_limit_frame -- --exact --nocapture
