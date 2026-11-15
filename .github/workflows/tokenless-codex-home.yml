@@ -2,7 +2,7 @@ name: Tokenless Codex HOME conflict replay
 
 on:
   push:
-    branches: [ci/sight-mapping-hooks-20261115]
+    branches: [ci/tokenless-codex-home-20261115]
 
 permissions:
   contents: read

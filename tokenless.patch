@@ -32,10 +32,10 @@ index a173b09..b8ef79e 100644
              TOKENLESS_BIN="$fp"
              break
 diff --git a/src/tokenless/tests/test-codex-adapter-install.sh b/src/tokenless/tests/test-codex-adapter-install.sh
-index 5303d0b..91bd42f 100644
+index 5303d0b..ca5985e 100644
 --- a/src/tokenless/tests/test-codex-adapter-install.sh
 +++ b/src/tokenless/tests/test-codex-adapter-install.sh
-@@ -306,6 +306,250 @@ else
+@@ -306,6 +306,252 @@ else
      fail "uninstall left the marketplace directory or the binary behind"
  fi
  
@@ -254,16 +254,18 @@ index 5303d0b..91bd42f 100644
 +            self.assertEqual(self.invoke(home, pin=pin), ("", ""))
 +            self.assertFalse(self.marker.exists())
 +
-+    def test_system_precedence_is_preserved_in_both_loops(self):
++    def test_codex_system_and_home_discovery_order(self):
 +        home = str(self.root / "home")
-+        home_cli = self.seed_home(home)
-+        self.seed(self.local_cli, "local")
-+        self.seed(self.system_cli, "system")
-+        for expected, identity in [(self.local_cli, "local"), (self.system_cli, "system"), (home_cli, "home")]:
-+            for direct in [False, True]:
-+                self.assertEqual(self.invoke(home, direct=direct),
-+                                 (str(expected), "canary:" + identity + ":argument with spaces\n"))
-+            if expected != home_cli:
++        for direct in [False, True]:
++            home_cli = self.seed_home(home)
++            self.seed(self.local_cli, "local")
++            self.seed(self.system_cli, "system")
++            system = [(self.local_cli, "local"), (self.system_cli, "system")]
++            order = [(home_cli, "home"), *system] if direct else [*system, (home_cli, "home")]
++            for expected, identity in order:
++                with self.subTest(direct=direct, identity=identity):
++                    self.assertEqual(self.invoke(home, direct=direct),
++                                     (str(expected), "canary:" + identity + ":argument with spaces\n"))
 +                expected.unlink()
 +
 +    def test_unmodified_source_preserves_explicit_and_path_priority(self):
