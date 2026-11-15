@@ -1,0 +1,38 @@
+name: Verify AgentSight parent namespace target resolution
+on:
+  push:
+    branches: [ci/sight-pidns-10037-20261115]
+permissions:
+  contents: read
+jobs:
+  validation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: agentic-os-org/ANOLISA
+          ref: fc3cf6930c8d9efef63618c7928d760f975e056a
+          path: source
+          persist-credentials: false
+          sparse-checkout: |
+            src/agentsight
+            src/cosh-ng
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install native library dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential libbpf-dev libelf-dev elfutils libssl-dev zlib1g-dev pkg-config libclang-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: source/src/agentsight
+      - name: Exercise the resolver on the hosted kernel
+        run: python3 payload/validate.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sight-pidns-resolution-evidence
+          path: evidence
