@@ -1,0 +1,65 @@
+name: open-eBackup MySQL restore with real binlogs
+on:
+  push:
+    branches: [ci/open-ebackup-mysql-pitr-real-20261115]
+permissions:
+  contents: read
+jobs:
+  mysql:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 9
+    env:
+      UPSTREAM: 96ecbf1228f9e8c8a9baedcc4722ea06f61ea74b
+      MYSQL_FIXTURE_PASSWORD: local-only-pitr-fixture
+      MYSQL_IMAGE: mysql:8.0.44@sha256:f7878bec832c6be5e61c39d3949651be8aa977daf875089b4560ae1434d2cb9c
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Replay a real binlog and verify both failure stages
+        shell: bash
+        run: |
+          set -euo pipefail
+          validation="$GITHUB_WORKSPACE/validation/open-ebackup-mysql-pitr"
+          source="$RUNNER_TEMP/open-eBackup"
+          fixture="$RUNNER_TEMP/oe-pitr-fixture"
+          mkdir -p "$fixture/bin"
+          git init --quiet "$source"
+          git -C "$source" fetch --quiet --depth=1 --no-tags --filter=blob:none https://gitcode.com/eBackup/open-eBackup.git "$UPSTREAM"
+          test "$(git -C "$source" rev-parse FETCH_HEAD)" = "$UPSTREAM"
+          cd "$source"
+          prefix=src/AppPlugins/database/applications
+          for path in common/common.py common/const.py mysql/src/utils/restore_func.py mysql/src/service/restore/log_restore.py; do
+            target="$prefix/$path"
+            mkdir -p "$(dirname "$target")"
+            git show "$UPSTREAM:$target" > "$target"
+          done
+          export OE_MYSQL_CONTAINER=oe-pitr-mysql
+          export PATH="$fixture/bin:$PATH"
+          docker run --detach --name "$OE_MYSQL_CONTAINER" --network none \
+            -e MYSQL_ROOT_PASSWORD="$MYSQL_FIXTURE_PASSWORD" \
+            -v "$fixture:$fixture:ro" "$MYSQL_IMAGE" \
+            --log-bin=/var/lib/mysql/pitr-source --server-id=1 --bind-address=127.0.0.1
+          trap 'docker rm -f "$OE_MYSQL_CONTAINER" >/dev/null' EXIT
+          for tool in mysqlbinlog mysql; do
+            printf '#!/bin/sh\nexec docker exec -i "$OE_MYSQL_CONTAINER" /usr/bin/%s "$@"\n' "$tool" > "$fixture/bin/$tool"
+            chmod +x "$fixture/bin/$tool"
+          done
+          for ((attempt=0; attempt<40; attempt++)); do
+            if [[ "$(mysql -uroot -p"$MYSQL_FIXTURE_PASSWORD" -N -B -e 'SELECT @@skip_networking' 2>/dev/null || true)" == '0' ]]; then
+              break
+            fi
+            sleep 2
+          done
+          mysql -uroot -p"$MYSQL_FIXTURE_PASSWORD" -e 'SELECT VERSION()'
+          db=(mysql -uroot -p"$MYSQL_FIXTURE_PASSWORD" -N -B)
+          current_binlog=$("${db[@]}" -e 'FLUSH BINARY LOGS; SHOW MASTER STATUS' | cut -f1)
+          [[ "$current_binlog" =~ ^pitr-source\.[0-9]+$ ]]
+          "${db[@]}" -e 'CREATE DATABASE pitr_fixture; CREATE TABLE pitr_fixture.example (id INT PRIMARY KEY); INSERT INTO pitr_fixture.example VALUES (7),(42); FLUSH BINARY LOGS;'
+          docker cp "$OE_MYSQL_CONTAINER:/var/lib/mysql/$current_binlog" "$fixture/pitr-valid.binlog"
+          chmod a+r "$fixture/pitr-valid.binlog"
+          head -c 3 "$fixture/pitr-valid.binlog" > "$fixture/pitr-corrupt.binlog"
+          python3 "$validation/database.py" "$source" "$fixture" "$OE_MYSQL_CONTAINER" original
+          git apply --check "$validation/pitr.patch"
+          git apply "$validation/pitr.patch"
+          python3 "$validation/database.py" "$source" "$fixture" "$OE_MYSQL_CONTAINER" fixed
