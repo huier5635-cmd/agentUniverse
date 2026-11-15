@@ -1,7 +1,0 @@
-name: "custom_agent_input_sink"
-description: "custom_agent_input_sink"
-file_prefix: 'agent'
-metadata:
-  type: 'LOG_SINK'
-  module: 'agentuniverse.base.util.logging.log_sink.agent_input_log_sink'
-  class: 'AgentInputLogSink'
