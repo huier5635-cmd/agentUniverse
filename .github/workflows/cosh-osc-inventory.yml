@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: agentic-os-org/ANOLISA
-          ref: fc3cf6930c8d9efef63618c7928d760f975e056a
+          ref: b9516bedad144591970f0cb9b348ed1620806ee6
           path: source
           persist-credentials: false
           sparse-checkout: src/cosh-ng
