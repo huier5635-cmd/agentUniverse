@@ -35,8 +35,6 @@ shutil.copyfile(root / "payload/candidate.rs", file)
 run("format-candidate", ["rustfmt", "--edition", "2021", str(file)])
 shutil.copyfile(file, evidence / "formatted-target_identity.rs")
 run("format", ["cargo", "fmt", "--all", "--", "--check"])
-run("unit", ["cargo", "test", "--locked", "-p", "ebpf-ifc-engine"])
-run("clippy", ["cargo", "clippy", "--locked", "-p", "ebpf-ifc-engine", "--all-targets", "--", "-D", "warnings"])
 
 binary = test_binary()
 run("live-preflight", ["sudo", "unshare", "--pid", "--fork", "--mount-proc", "true"])
@@ -50,3 +48,9 @@ shutil.copyfile(root / "payload/baseline.rs", file)
 baseline_bin = test_binary()
 old = run("baseline-host", ["sudo", baseline_bin, *args], 101)
 assert "is absent from PID namespace" in old and "1 failed" in old
+
+shutil.copyfile(root / "payload/baseline.rs", file)
+baseline_units = run("baseline-units", ["cargo", "test", "--locked", "-p", "ebpf-ifc-engine"], 101)
+assert "tests::file_flow_does_not_enable_lsm_file_hooks_without_block_file ... FAILED" in baseline_units and "1 failed" in baseline_units
+shutil.copyfile(evidence / "formatted-target_identity.rs", file)
+run("clippy", ["cargo", "clippy", "--locked", "-p", "ebpf-ifc-engine", "--all-targets", "--", "-D", "warnings"])
