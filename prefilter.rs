@@ -63,7 +63,15 @@ impl Prefilter {
 // deliberately left to the original matcher.
 fn relax(expression: &mut Expr) -> bool {
     match expression {
-        Expr::LookAround(_, _) => *expression = Expr::Empty,
+        Expr::LookAround(_, _) | Expr::Empty => {
+            // Keep an empty atom so a surrounding quantifier still applies to
+            // it, including when the previous token could accept a quantifier.
+            *expression = Expr::Delegate {
+                inner: "(?:)".to_owned(),
+                size: 0,
+                casei: false,
+            };
+        }
         Expr::Concat(children) | Expr::Alt(children) => return children.iter_mut().all(relax),
         Expr::Group(child) | Expr::Repeat { child, .. } => return relax(child),
         Expr::Assertion(Assertion::WordBoundary | Assertion::NotWordBoundary) => {
@@ -78,8 +86,7 @@ fn relax(expression: &mut Expr) -> bool {
                 casei: false,
             };
         }
-        Expr::Empty
-        | Expr::Literal { .. }
+        Expr::Literal { .. }
         | Expr::Any { .. }
         | Expr::Delegate { .. }
         | Expr::Assertion(
@@ -116,5 +123,14 @@ mod tests {
         assert!(Prefilter::new(r"(?>a|ab)c").is_none());
         let prefilter = Prefilter::new(r"a(?!b)").unwrap();
         assert!(prefilter.find_all(&"ab ".repeat(MAX_REJECTED_CANDIDATES)).is_none());
+    }
+
+    #[test]
+    fn removed_quantified_assertion_does_not_bind_to_the_previous_token() {
+        let mut expr = Expr::parse_tree(r"b(?=a){2}a").unwrap().expr;
+        assert!(relax(&mut expr));
+        let mut pattern = String::new();
+        expr.to_str(&mut pattern, 0);
+        assert!(regex::Regex::new(&pattern).unwrap().is_match("ba"));
     }
 }
