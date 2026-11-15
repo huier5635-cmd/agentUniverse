@@ -1,0 +1,45 @@
+name: open-eBackup MySQL point-in-time restore pipeline
+on:
+  push:
+    branches: [ci/open-ebackup-mysql-pitr-20261115]
+permissions:
+  contents: read
+jobs:
+  pitr:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
+    env:
+      UPSTREAM: 96ecbf1228f9e8c8a9baedcc4722ea06f61ea74b
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Compare original and proposed restore on real Bash pipelines
+        shell: bash
+        run: |
+          set -euo pipefail
+          validation="$GITHUB_WORKSPACE/validation/open-ebackup-mysql-pitr"
+          source="$RUNNER_TEMP/open-eBackup"
+          git init --quiet "$source"
+          git -C "$source" fetch --quiet --depth=1 --no-tags --filter=blob:none https://gitcode.com/eBackup/open-eBackup.git "$UPSTREAM"
+          test "$(git -C "$source" rev-parse FETCH_HEAD)" = "$UPSTREAM"
+          cd "$source"
+          prefix=src/AppPlugins/database/applications
+          for path in common/common.py common/const.py mysql/src/utils/restore_func.py mysql/src/service/restore/log_restore.py; do
+            target="$prefix/$path"
+            mkdir -p "$(dirname "$target")"
+            git show "$UPSTREAM:$target" > "$target"
+          done
+          set +e
+          python3 "$validation/probe.py" "$source" > "$RUNNER_TEMP/pitr-original.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/pitr-original.log"
+          test "$result" -eq 1
+          grep -F 'test_success_replays_sql' "$RUNNER_TEMP/pitr-original.log" | grep -F ' ... ok'
+          grep -F 'FAIL: test_decoder_failure_is_reported_and_stops_later_files' "$RUNNER_TEMP/pitr-original.log"
+          grep -F 'FAIL: test_mysql_failure_is_reported' "$RUNNER_TEMP/pitr-original.log"
+          git apply --check "$validation/pitr.patch"
+          git apply "$validation/pitr.patch"
+          python3 -m py_compile "$prefix/common/common.py" "$prefix/mysql/src/service/restore/log_restore.py"
+          python3 "$validation/probe.py" "$source"
