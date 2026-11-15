@@ -32,15 +32,15 @@ diff --git a/src/AppPlugins/database/applications/mysql/src/service/restore/log_
 -                f"--stop-datetime={shlex.quote(stop_datetime)} | mysql {mysql_args}"
 -            )
 -            restore_exec_cmd = ["/bin/bash", "-o", "pipefail", "-c", restore_cmd]
-+        # A single mysql connection keeps session state across rotations.
-+        # Stream the file list instead of putting it in the shell arguments.
++        # A single decoder and mysql connection keep session state across rotations.
++        # Read the files separately to avoid embedding their paths in the Bash command.
 +        restore_cmd = (
-+            "{ position=$2; while IFS= read -r -d '' file; do "
-+            'start_args=(); if [[ -n "$position" ]]; then start_args=(--start-position="$position"); fi; '
++            "files=(); while IFS= read -r -d '' file; do "
++            'files+=("$file"); done < "$1"; '
 +            f"mysqlbinlog --no-defaults {database_cmd} {skip_gtids_cmd} "
-+            '"${start_args[@]}" '
-+            f'--disable-log-bin --stop-datetime={shlex.quote(stop_datetime)} "$file" || exit $?; '
-+            'position=; done < "$1"; } | '
++            '--disable-log-bin --start-position="$2" '
++            f"--stop-datetime={shlex.quote(stop_datetime)} "
++            '"${files[@]}" < /dev/null | '
 +            f"mysql {mysql_args}"
 +        )
 +        with NamedTemporaryFile(prefix="open-ebackup-pitr-") as file_list:

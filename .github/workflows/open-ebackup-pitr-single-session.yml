@@ -1,8 +1,8 @@
-name: Check open-eBackup rotated-log replay in one real MySQL session
+name: Check open-eBackup rotated-log replay with one decoder
 
 on:
   push:
-    branches: [ci/open-ebackup-pitr-single-session-20261115]
+    branches: [ci/open-ebackup-pitr-single-decoder-20261115]
 
 permissions:
   contents: read
@@ -133,7 +133,7 @@ jobs:
           git apply -R "$validation/log-offset.patch"
           git apply --check "$validation/single-session.patch"
           git apply "$validation/single-session.patch"
-          test "$(git hash-object "$prefix/mysql/src/service/restore/log_restore.py")" = d4e444a483801ea35c7ef7c9fd05a79b2999f798
+          test "$(git hash-object "$prefix/mysql/src/service/restore/log_restore.py")" = 3b3d748534145e881ce4f41028e110d4df0bc9f4
           python3 "$validation/replay-session.py" "$source" candidate
       - name: Clean up fixture containers
         if: always()
