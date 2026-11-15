@@ -1,0 +1,95 @@
+diff --git a/docs/user-guide/en/tokenless/cli-reference.md b/docs/user-guide/en/tokenless/cli-reference.md
+index b11b8f7..e60e475 100644
+--- a/docs/user-guide/en/tokenless/cli-reference.md
++++ b/docs/user-guide/en/tokenless/cli-reference.md
+@@ -559,6 +559,8 @@ tokenless stats disable
+ tokenless stats clear --yes
+ ```
+ 
++Without `--yes`, `stats clear` requires terminal input and output for the confirmation. Automation must pass `--yes` explicitly.
++
+ Dual-run comparison:
+ 
+ ```bash
+diff --git a/docs/user-guide/zh/tokenless/cli-reference.md b/docs/user-guide/zh/tokenless/cli-reference.md
+index 48508f6..580d3d4 100644
+--- a/docs/user-guide/zh/tokenless/cli-reference.md
++++ b/docs/user-guide/zh/tokenless/cli-reference.md
+@@ -519,6 +519,8 @@ tokenless stats disable
+ tokenless stats clear --yes
+ ```
+ 
++未指定 `--yes` 时，`stats clear` 需要在终端中显示提示并读取确认。自动化脚本须显式传入 `--yes`。
++
+ 双跑对比：
+ 
+ ```bash
+diff --git a/src/tokenless/crates/tokenless-cli/src/main.rs b/src/tokenless/crates/tokenless-cli/src/main.rs
+index 85162e9..40bd697 100644
+--- a/src/tokenless/crates/tokenless-cli/src/main.rs
++++ b/src/tokenless/crates/tokenless-cli/src/main.rs
+@@ -1213,6 +1213,14 @@ fn run_command(command: Commands) -> Result<(), (String, i32)> {
+                         // The prompt gates the destructive clear below, so an
+                         // undelivered one fails here instead of waiting on stdin.
+                         write_prompt_raw("Are you sure you want to clear all statistics? [y/N] ")?;
++                        // A successful write can still have gone to a sink such as /dev/null.
++                        if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
++                            return Err((
++                                "Interactive confirmation requires terminal stdin and stdout; use --yes for automation."
++                                    .to_string(),
++                                1,
++                            ));
++                        }
+                         let mut input = String::new();
+                         if io::stdin().read_line(&mut input).unwrap_or(0) == 0 {
+                             write_stdout("Cancelled.")?;
+diff --git a/src/tokenless/crates/tokenless-cli/tests/cli_integration.rs b/src/tokenless/crates/tokenless-cli/tests/cli_integration.rs
+index b53e9c8..3109105 100644
+--- a/src/tokenless/crates/tokenless-cli/tests/cli_integration.rs
++++ b/src/tokenless/crates/tokenless-cli/tests/cli_integration.rs
+@@ -4632,6 +4632,45 @@ fn stats_clear_prompt_fails_without_clearing_when_the_consumer_stopped_reading()
+     );
+ }
+ 
++#[test]
++#[cfg(target_os = "linux")]
++fn stats_clear_requires_explicit_yes_when_stdout_is_closed_at_startup() {
++    use std::io::Write as _;
++    use std::process::Stdio;
++
++    let fixture = TempStatsDb::new().expect("seed a private statistics database");
++    let mut child = Command::new("sh")
++        .args(["-c", r#"exec "$1" stats clear 1>&-"#, "sh"])
++        .arg(fixture.command().get_program())
++        .env("TOKENLESS_STATS_DB", &fixture.path)
++        .env("TOKENLESS_SLS_ENABLED", "0")
++        .stdin(Stdio::piped())
++        .stderr(Stdio::piped())
++        .spawn()
++        .unwrap();
++    let _ = child.stdin.take().unwrap().write_all(b"y\n");
++    let output = child.wait_with_output().unwrap();
++    let stderr = String::from_utf8_lossy(&output.stderr);
++
++    let recorder = StatsRecorder::new(&fixture.path).unwrap();
++    assert!(
++        recorder.record_by_id(fixture.record_id).unwrap().is_some(),
++        "an unseen prompt must preserve the seeded record (status: {}, stderr: {stderr})",
++        output.status
++    );
++    assert_eq!(output.status.code(), Some(1), "{stderr}");
++    assert!(stderr.contains("use --yes for automation"), "{stderr}");
++
++    let forced = fixture
++        .command()
++        .args(["stats", "clear", "--yes"])
++        .stdin(Stdio::null())
++        .output()
++        .unwrap();
++    assert!(forced.status.success(), "{forced:?}");
++    assert_eq!(recorder.count().unwrap(), 0);
++}
++
+ /// A response above the 500-character TOON minimum, so `compress-toon`
+ /// actually encodes it instead of taking the passthrough branch.
+ #[cfg(target_os = "linux")]

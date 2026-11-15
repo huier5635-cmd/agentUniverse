@@ -1,0 +1,49 @@
+name: Tokenless closed stdout regression
+on:
+  push:
+    branches: [ci/tokenless-clear-9616-20261115]
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 24
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: agentic-os-org/ANOLISA
+          ref: fc3cf6930c8d9efef63618c7928d760f975e056a
+          path: upstream
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.91.0'
+          components: 'rustfmt, clippy'
+      - name: Reproduce on main and verify the fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          patch="$GITHUB_WORKSPACE/validation/tokenless-9616/candidate.patch"
+          cd upstream
+          test "$(git rev-parse HEAD)" = fc3cf6930c8d9efef63618c7928d760f975e056a
+          bash src/tokenless/packaging/build/setup-rtk.sh
+          git apply --check "$patch"
+          git apply --include='*/tests/cli_integration.rs' "$patch"
+          cd src/tokenless
+          set +e
+          cargo test --locked -p tokenless-cli --test cli_integration stats_clear_requires_explicit_yes_when_stdout_is_closed_at_startup -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/9616-baseline.log"
+          baseline=${PIPESTATUS[0]}
+          set -e
+          test "$baseline" -eq 101
+          grep -F 'an unseen prompt must preserve the seeded record (status: exit status: 0, stderr: )' "$RUNNER_TEMP/9616-baseline.log"
+          grep -F '1 failed' "$RUNNER_TEMP/9616-baseline.log"
+          cd ../..
+          git apply --exclude='*/tests/cli_integration.rs' "$patch"
+          git diff --check
+          cd src/tokenless
+          cargo fmt --all -- --check
+          cargo test --locked -p tokenless-cli -- --test-threads=1
+          cargo clippy --locked -p tokenless-cli --all-targets -- -D warnings
