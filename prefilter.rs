@@ -1,4 +1,4 @@
-//! Accelerate large persistence scans by verifying only possible match starts.
+//! Accelerate large scans by verifying only possible match starts.
 
 use fancy_regex::{Assertion, Expr, Regex, RegexBuilder};
 
@@ -127,7 +127,7 @@ mod tests {
 
     #[test]
     fn removed_quantified_assertion_does_not_bind_to_the_previous_token() {
-        let mut expr = Expr::parse_tree(r"b(?=a){2}a").unwrap().expr;
+        let mut expr = Expr::parse_tree(r"b((?=a)){2}a").unwrap().expr;
         assert!(relax(&mut expr));
         let mut pattern = String::new();
         expr.to_str(&mut pattern, 0);

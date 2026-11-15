@@ -1,4 +1,4 @@
-name: Sec-Core Bash rule profile near the frame limit
+name: Sec-Core full Bash scan and daemon transport
 
 on:
   push:
@@ -8,9 +8,9 @@ permissions:
   contents: read
 
 jobs:
-  measure:
+  verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,17 +21,17 @@ jobs:
           ref: 95dd38ee23ece0198d37605ec61be2145156f127
           path: upstream
           persist-credentials: false
-      - name: Measure each shipped rule on the same input
+      - name: Apply the candidate and add an isolated daemon check
         run: |
-          rustup toolchain install 1.93.0 --profile minimal
+          rustup toolchain install 1.93.0 --profile minimal -c rustfmt -c clippy
           v2=upstream/src/agent-sec-core/v2
           crate="$v2/crates/asc-capability-code-scan"
           cp engine.rs "$crate/src/engine.rs"
           mkdir -p "$crate/src/engine"
           cp prefilter.rs "$crate/src/engine/prefilter.rs"
-          cp profile-bash-rules.rs "$crate/src/engine/large_scan_profile.rs"
-          printf '\n#[cfg(test)]\nmod large_scan_profile;\n' >> "$crate/src/engine.rs"
           cp scanner-Cargo.toml "$crate/Cargo.toml"
+          cp shipped_rules.rs "$crate/tests/shipped_rules.rs"
+          cat daemon-large-scan-probe.rs >> "$v2/apps/asc-daemon/tests/code_scan_protocol.rs"
           cd "$v2"
           python3 - <<'PY'
           from pathlib import Path
@@ -43,8 +43,23 @@ jobs:
           dependency = ' "fancy-regex",\n'
           assert package.count(dependency) == 1
           lockfile.write_text(text[:start] + package.replace(dependency, dependency + ' "regex",\n') + text[end:])
+          protocol = Path('apps/asc-daemon/tests/code_scan_protocol.rs')
+          test = protocol.read_text()
+          artificial_timeout = '        config.service.request_read_timeout = Duration::from_millis(50);\n'
+          assert test.count(artificial_timeout) == 1
+          protocol.write_text(test.replace(artificial_timeout, '').replace('let mut config = BootstrapConfig', 'let config = BootstrapConfig'))
           PY
-          cargo +1.93.0 test --locked -p asc-capability-code-scan --lib engine::large_scan_profile::profile_each_shipped_bash_rule_at_the_frame_limit -- --exact --nocapture
-      - name: Verify the relaxed expression's quantified assertion semantics
+          prefix=crates/asc-capability-code-scan
+          rustfmt +1.93.0 --edition 2024 "$prefix/src/engine.rs" "$prefix/src/engine/prefilter.rs" "$prefix/tests/shipped_rules.rs"
+          git diff --check
+          git hash-object "$prefix/src/engine.rs" "$prefix/src/engine/prefilter.rs" "$prefix/tests/shipped_rules.rs"
+      - name: Run complete scanner tests and Clippy
+        id: scanner
         working-directory: upstream/src/agent-sec-core/v2
-        run: cargo +1.93.0 test --locked -p asc-capability-code-scan --lib engine::prefilter::tests::removed_quantified_assertion_does_not_bind_to_the_previous_token -- --exact
+        run: |
+          cargo +1.93.0 test --locked -p asc-capability-code-scan -- --nocapture
+          cargo +1.93.0 clippy --locked -p asc-capability-code-scan --all-targets -- -D warnings
+      - name: Send a near-limit frame through a real Unix socket
+        if: ${{ !cancelled() && (steps.scanner.outcome == 'success' || steps.scanner.outcome == 'failure') }}
+        working-directory: upstream/src/agent-sec-core/v2
+        run: cargo +1.93.0 test --locked -p asc-daemon --test code_scan_protocol local_user_scans_full_bash_rules_in_near_limit_frame -- --exact --nocapture

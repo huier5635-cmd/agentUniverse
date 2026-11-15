@@ -195,11 +195,10 @@ pub(crate) fn run_regex_rules_for_inputs(
             .flatten()
             .map(|target| compile(target, &rule.rule_id, input_len))
             .collect::<Result<Vec<_>, _>>()?;
-        let large_persistence_rule = rule.rule_id == "shell-persistence"
-            && language == Language::Bash
+        let large_plain_bash_rule = language == Language::Bash
             && targets.is_empty()
             && input_len >= MAX_BACKTRACK_LIMIT / BACKTRACK_STEPS_PER_BYTE;
-        let prefilter = if large_persistence_rule {
+        let prefilter = if large_plain_bash_rule {
             prefilter::Prefilter::new(&rule.regex)
         } else {
             None
