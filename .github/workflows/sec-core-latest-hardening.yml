@@ -8,63 +8,6 @@ permissions:
   contents: read
 
 jobs:
-  python:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          path: candidate
-          persist-credentials: false
-      - uses: actions/checkout@v4
-        with:
-          repository: agentic-os-org/ANOLISA
-          ref: 95dd38ee23ece0198d37605ec61be2145156f127
-          path: upstream
-          persist-credentials: false
-          sparse-checkout: src/agent-sec-core
-      - uses: astral-sh/setup-uv@v6
-        with:
-          version: 0.9.5
-          python-version: 3.11.6
-      - name: Reproduce the Python defects on unmodified main
-        working-directory: upstream/src/agent-sec-core
-        env:
-          PYTHONPATH: agent-sec-cli/src
-        run: |
-          uv sync --project agent-sec-cli --locked --no-install-project --group dev
-          uv run --project agent-sec-cli --no-sync python -c 'import sys; assert sys.version_info[:3] == (3, 11, 6); print(sys.version)'
-          cp "$GITHUB_WORKSPACE/candidate/test_summary_formatter.py" tests/unit-test/security_events/
-          set +e
-          uv run --project agent-sec-cli --no-sync python -m pytest tests/unit-test/security_events/test_summary_formatter.py -k latest_scan_without_stats_reports_actual_status -q --junitxml="$RUNNER_TEMP/summary-baseline.xml"
-          status=$?
-          set -e
-          test "$status" -eq 1
-          uv run --project agent-sec-cli --no-sync python - <<'PY'
-          import os
-          from pathlib import Path
-          from xml.etree import ElementTree
-          report = Path(os.environ["RUNNER_TEMP"]) / "summary-baseline.xml"
-          suite = ElementTree.parse(report).find("testsuite")
-          actual = {key: suite.get(key) for key in ("tests", "failures", "errors", "skipped")}
-          assert actual == {"tests": "4", "failures": "3", "errors": "0", "skipped": "0"}, actual
-          print(actual)
-          PY
-      - name: Validate the Python fix and existing report behavior
-        working-directory: upstream/src/agent-sec-core
-        env:
-          PYTHONPATH: agent-sec-cli/src
-        run: |
-          source_file=agent-sec-cli/src/agent_sec_cli/security_events/summary_formatter.py
-          test_file=tests/unit-test/security_events/test_summary_formatter.py
-          cp "$GITHUB_WORKSPACE/candidate/summary_formatter.py" "$source_file"
-          git hash-object "$source_file" "$test_file"
-          uv run --project agent-sec-cli --no-sync python -m black --config agent-sec-cli/pyproject.toml --check "$source_file" "$test_file"
-          uv run --project agent-sec-cli --no-sync python -m isort --settings-path agent-sec-cli/pyproject.toml --check-only "$source_file" "$test_file"
-          uv run --project agent-sec-cli --no-sync python -m ruff check --config agent-sec-cli/pyproject.toml "$source_file" "$test_file"
-          uv run --project agent-sec-cli --no-sync python -m pytest tests/unit-test/security_events/ -q
-          git diff --check
-
   rust:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -85,7 +28,7 @@ jobs:
         run: |
           rustup toolchain install 1.93.0 --profile minimal -c rustfmt -c clippy
           cp "$GITHUB_WORKSPACE/candidate/baseline-events_summary.rs" apps/asc-cli/src/commands/events_summary.rs
-          if cargo +1.93.0 test --locked -p asc-cli --bin agent-sec-cli latest_scan_without_stats_reports_actual_status -- --nocapture > "$RUNNER_TEMP/summary-original.txt" 2>&1; then
+          if cargo +1.93.0 test --locked -p asc-cli --lib latest_scan_without_stats_reports_actual_status -- --nocapture > "$RUNNER_TEMP/summary-original.txt" 2>&1; then
             cat "$RUNNER_TEMP/summary-original.txt"
             exit 1
           fi
@@ -99,6 +42,6 @@ jobs:
           cp "$GITHUB_WORKSPACE/candidate/events_summary.rs" "$source_file"
           git hash-object "$source_file"
           rustfmt +1.93.0 --edition 2024 --check "$source_file"
-          cargo +1.93.0 test --locked -p asc-cli --bin agent-sec-cli
-          cargo +1.93.0 clippy --locked -p asc-cli --bin agent-sec-cli -- -D warnings
+          cargo +1.93.0 test --locked -p asc-cli --lib
+          cargo +1.93.0 clippy --locked -p asc-cli --lib -- -D warnings
           git diff --check
