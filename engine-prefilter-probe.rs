@@ -19,15 +19,13 @@ fn ranges(regex: &Regex, code: &str) -> fancy_regex::Result<Vec<(usize, usize)>>
 }
 
 fn prefiltered_ranges(
-    prefilter: &Regex,
+    prefilter: &regex::Regex,
     exact: &Regex,
     code: &str,
 ) -> fancy_regex::Result<Vec<(usize, usize)>> {
     let mut matches = Vec::new();
     let mut pos = 0;
-    while let Some(candidate) = prefilter.find_from_pos(code, pos).inspect_err(|error| {
-        eprintln!("prefilter search from byte {pos} failed: {error:?}");
-    })? {
+    while let Some(candidate) = prefilter.find_at(code, pos) {
         let start = candidate.start();
         if let Some(found) = exact.find_from_pos(code, start).inspect_err(|error| {
             eprintln!("exact verification at byte {start} failed: {error:?}");
@@ -60,7 +58,7 @@ fn measure_persistence_prefilter_against_current_engine() {
         .replace(r"(?<![=])", "")
         .replace(r"(?!\s+-[lre]\b)", "");
     assert!(!widened.contains("(?!") && !widened.contains("(?<!"));
-    let prefilter = compile(&widened);
+    let prefilter = regex::Regex::new(&widened).expect("linear candidate expression");
     let samples = [
         "echo αβ\nsystemctl enable fixture.service\n",
         "# systemctl enable fixture.service\n\tsystemctl enable test.service",
@@ -87,18 +85,6 @@ fn measure_persistence_prefilter_against_current_engine() {
     let mut code = noise.repeat(7_000);
     code.push_str("systemctl enable fixture.service\n");
 
-    let boundaries = [r"|\btee\b", r"|(?m:", r"|\bcrontab\b"]
-        .map(|marker| rule.regex.find(marker).unwrap());
-    let ends = [boundaries[0], boundaries[1], boundaries[2], rule.regex.len()];
-    let starts = [0, boundaries[0] + 1, boundaries[1] + 1, boundaries[2] + 1];
-    for ((start, end), name) in starts.into_iter().zip(ends)
-        .zip(["redirect", "tee", "systemctl", "crontab"])
-    {
-        let alternative = compile(&rule.regex[start..end]);
-        let started = Instant::now();
-        let observed = ranges(&alternative, &code);
-        eprintln!("{name}, {:?}: {observed:?}", started.elapsed());
-    }
     let started = Instant::now();
     let actual = prefiltered_ranges(&prefilter, &exact, &code);
     eprintln!("prefilter, {} bytes, {:?}: {actual:?}", code.len(), started.elapsed());

@@ -25,5 +25,17 @@ jobs:
         run: |
           cp engine-prefilter-probe.rs source/src/agent-sec-core/v2/crates/asc-capability-code-scan/tests/engine_prefilter_probe.rs
           cd source/src/agent-sec-core/v2
+          python3 - <<'PY'
+          from pathlib import Path
+          manifest = Path('crates/asc-capability-code-scan/Cargo.toml')
+          text = manifest.read_text()
+          anchor = '[dev-dependencies]\n'
+          assert text.count(anchor) == 1
+          manifest.write_text(text.replace(anchor, anchor + 'regex.workspace = true\n'))
+          PY
           rustup toolchain install 1.93.0 --profile minimal
-          cargo +1.93.0 test --locked -p asc-capability-code-scan --test engine_prefilter_probe -- --nocapture --test-threads=1
+          cargo +1.93.0 test -p asc-capability-code-scan --test engine_prefilter_probe -- --nocapture --test-threads=1
+      - name: Confirm dependency resolution changed only the scratch edge
+        if: always()
+        working-directory: source/src/agent-sec-core/v2
+        run: git diff -- Cargo.lock
