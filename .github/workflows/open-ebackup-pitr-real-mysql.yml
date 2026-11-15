@@ -58,6 +58,9 @@ jobs:
           source_sql 'INSERT INTO pitr_fixture.events VALUES (2); FLUSH BINARY LOGS'
           docker cp "pitr-source:/var/lib/mysql/$filename" "$fixture/valid/$filename"
           chmod a+r "$fixture/valid/$filename"
+          docker exec pitr-source mysqlbinlog --no-defaults --base64-output=DECODE-ROWS \
+            --verbose "$fixture/valid/$filename" > "$RUNNER_TEMP/decoded-binlog.log"
+          grep -E '^#2[0-9]{5} |^### INSERT INTO|^###   @1=' "$RUNNER_TEMP/decoded-binlog.log"
           cat > "$RUNNER_TEMP/mysql-tools/mysqlbinlog" <<'SH'
           #!/usr/bin/env bash
           exec docker exec -i pitr-source mysqlbinlog "$@"

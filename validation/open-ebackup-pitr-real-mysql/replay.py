@@ -1,7 +1,8 @@
 """Exercise the source restore method with real MySQL programs in test containers."""
 
-import os
 from datetime import datetime, timezone
+import logging
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -10,6 +11,7 @@ from types import SimpleNamespace
 import probe
 
 
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 fixture = Path(os.environ["PITR_FIXTURE"])
 binlog_name = os.environ["PITR_BINLOG"]
 snapshot_time = int(os.environ["PITR_SNAPSHOT"])
@@ -86,7 +88,8 @@ def restored_ids():
 
 target_sql("TRUNCATE TABLE pitr_fixture.events")
 assert restore("valid-replay"), "the genuine binary log must replay"
-assert restored_ids() == "1", "the event after the requested time must be excluded"
+ids = restored_ids()
+assert ids == "1", f"expected only id=1 at the requested time, observed {ids!r}"
 print("real MySQL point-in-time cutoff: passed")
 
 expected_failure = mode == "candidate"
