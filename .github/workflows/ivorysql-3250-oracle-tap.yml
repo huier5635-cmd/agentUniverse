@@ -1,0 +1,50 @@
+name: Validate IvorySQL #3250 with Oracle TAP enabled
+
+on:
+  push:
+    branches: [ci/ivorysql-3250-oracle-tap-20261115]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: huier5635-cmd/IvorySQL
+          ref: 6af2d7ac89d8b52f892afb080c458988022d1b56
+          persist-credentials: false
+      - name: Build the submitted head with XML and XSLT enabled
+        run: |
+          test "$(git rev-parse HEAD)" = 6af2d7ac89d8b52f892afb080c458988022d1b56
+          test "$(git hash-object src/oracle_test/regress/pg_regress.c)" = d99cfbbc802b8d6a27b71aa10b51a42a78a7b26d
+          ivory_prefix="$RUNNER_TEMP/ivory-prefix"
+          printf 'IVORY_PREFIX=%s\n' "$ivory_prefix" >> "$GITHUB_ENV"
+          sudo apt-get update -q
+          sudo apt-get install -y bison flex libreadline-dev zlib1g-dev uuid-dev libicu-dev libxml2-dev libxslt1-dev libcurl4-openssl-dev libipc-run-perl libtest-simple-perl
+          ./configure --prefix="$ivory_prefix" --with-uuid=e2fs --with-icu --with-libxml --with-libxslt --enable-tap-tests
+          make -j"$(nproc)" world-bin > "$RUNNER_TEMP/build.log" 2>&1 || { tail -n 120 "$RUNNER_TEMP/build.log"; exit 1; }
+          make -j1 install-world-bin > "$RUNNER_TEMP/install.log" 2>&1 || { tail -n 120 "$RUNNER_TEMP/install.log"; exit 1; }
+          "$ivory_prefix/bin/pg_config" --configure
+      - name: Run Oracle check-world with temporary servers
+        run: |
+          if ! make -j1 -k oracle-check-world > "$RUNNER_TEMP/oracle-world.log" 2>&1; then
+            grep -E 'not ok|Error [0-9]+' "$RUNNER_TEMP/oracle-world.log" | tail -n 55 || true
+            tail -n 70 "$RUNNER_TEMP/oracle-world.log"
+            exit 1
+          fi
+          grep -E '\+\+\+ tap|t/[^ ]+\.pl .*ok|Files=[0-9]+, Tests=[0-9]+|tests passed|^ok .* - ivy_xml2' "$RUNNER_TEMP/oracle-world.log" | tail -n 25 || true
+          grep -Eq '^t/001_dbms_scheduler\.pl +\.\.+ ok' "$RUNNER_TEMP/oracle-world.log"
+          tail -n 25 "$RUNNER_TEMP/oracle-world.log"
+      - name: Preserve failed-suite details
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ivorysql-3250-regression-details
+          path: |
+            ${{ runner.temp }}/oracle-world.log
+            **/regression.diffs
+          if-no-files-found: warn
