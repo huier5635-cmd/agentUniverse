@@ -18,7 +18,9 @@ jobs:
           ref: b9516bedad144591970f0cb9b348ed1620806ee6
           path: source
           persist-credentials: false
-          sparse-checkout: src/cosh-ng
+          sparse-checkout: |
+            src/cosh-ng
+            specs
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
