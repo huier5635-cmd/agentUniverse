@@ -1,0 +1,77 @@
+name: Verify IvorySQL xml2 fallback expectations
+
+on:
+  push:
+    branches: [ci/ivory-xml2-without-libxslt-20261115]
+
+permissions:
+  contents: read
+
+jobs:
+  regress:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        xslt: [without, with]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: candidate
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: IvorySQL/IvorySQL
+          ref: 475ab1956568da0e6e796902bf6e13a916396edd
+          path: upstream
+          persist-credentials: false
+      - name: Build IvorySQL in PostgreSQL and Oracle modes
+        working-directory: upstream
+        run: |
+          IVORY_PREFIX="$RUNNER_TEMP/ivory-prefix"
+          printf 'IVORY_PREFIX=%s\n' "$IVORY_PREFIX" >> "$GITHUB_ENV"
+          sudo apt-get update -q
+          sudo apt-get install -y bison flex libreadline-dev zlib1g-dev uuid-dev libxml2-dev libxslt1-dev libcurl4-openssl-dev
+          ./configure --prefix="$IVORY_PREFIX" --without-icu --with-uuid=e2fs --with-libxml --${{ matrix.xslt }}-libxslt
+          make -j"$(nproc)" world-bin > "$RUNNER_TEMP/ivory-build.log" 2>&1 || { tail -n 100 "$RUNNER_TEMP/ivory-build.log"; exit 1; }
+      - name: Reproduce missing or foreign expected output on unmodified main
+        if: matrix.xslt == 'without'
+        working-directory: upstream
+        run: |
+          for entry in check:xml2 oracle-check:ivy_xml2; do
+            target=${entry%:*}
+            test_name=${entry#*:}
+            if make -C contrib/xml2 "$target" > "$RUNNER_TEMP/baseline-$target.log" 2>&1; then
+              tail -n 100 "$RUNNER_TEMP/baseline-$target.log"
+              printf '%s unexpectedly passed on main\n' "$target" >&2
+              exit 1
+            fi
+            tail -n 100 "$RUNNER_TEMP/baseline-$target.log"
+            grep -E "not ok.*[[:space:]]$test_name([[:space:]]|$)" "$RUNNER_TEMP/baseline-$target.log"
+            test -s contrib/xml2/regression.diffs
+            cp contrib/xml2/regression.diffs "$RUNNER_TEMP/baseline-$target.diff"
+          done
+      - name: Check PostgreSQL and Oracle expected output with the patch
+        working-directory: upstream
+        run: |
+          cp ../candidate/xml2_1.out ../candidate/ivy_xml2_1.out contrib/xml2/expected/
+          git hash-object contrib/xml2/expected/xml2_1.out contrib/xml2/expected/ivy_xml2_1.out
+          for target in check oracle-check; do
+            make -C contrib/xml2 "$target" > "$RUNNER_TEMP/candidate-$target.log" 2>&1 || { tail -n 120 "$RUNNER_TEMP/candidate-$target.log"; exit 1; }
+            grep -E 'ok.*xml2|All .* tests passed' "$RUNNER_TEMP/candidate-$target.log"
+          done
+      - name: Run serial installcheck-world without libxslt
+        if: matrix.xslt == 'without'
+        working-directory: upstream
+        run: |
+          make -j1 install-world-bin > "$RUNNER_TEMP/ivory-install.log" 2>&1 || { tail -n 100 "$RUNNER_TEMP/ivory-install.log"; exit 1; }
+          export PGHOST
+          PGHOST=$(mktemp -d)
+          export PGPORT=56928
+          cluster="$RUNNER_TEMP/ivory-pg"
+          "$IVORY_PREFIX/bin/initdb" -D "$cluster" -m pg -C normal --auth trust --no-locale
+          "$IVORY_PREFIX/bin/pg_ctl" -D "$cluster" -o "-p $PGPORT -k $PGHOST -c listen_addresses= -c max_prepared_transactions=2" -w start
+          trap '"$IVORY_PREFIX/bin/pg_ctl" -D "$cluster" -m fast -w stop' EXIT
+          make -j1 installcheck-world > "$RUNNER_TEMP/ivory-installcheck.log" 2>&1 || { tail -n 120 "$RUNNER_TEMP/ivory-installcheck.log"; exit 1; }
+          tail -n 60 "$RUNNER_TEMP/ivory-installcheck.log"
