@@ -1,4 +1,4 @@
-name: Sec-Core scan candidate prefilter probe
+name: Sec-Core large scripts with full shipped rules
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 18
     steps:
       - uses: actions/checkout@v4
         with:
@@ -19,23 +19,44 @@ jobs:
         with:
           repository: agentic-os-org/ANOLISA
           ref: 95dd38ee23ece0198d37605ec61be2145156f127
-          path: source
+          path: upstream
           persist-credentials: false
-      - name: Compare real scanner regex behavior
+      - name: Reproduce the full-rule failure on the original code
         run: |
-          cp engine-prefilter-probe.rs source/src/agent-sec-core/v2/crates/asc-capability-code-scan/tests/engine_prefilter_probe.rs
-          cd source/src/agent-sec-core/v2
+          rustup toolchain install 1.93.0 --profile minimal -c rustfmt -c clippy
+          v2=upstream/src/agent-sec-core/v2
+          cp shipped_rules.rs "$v2/crates/asc-capability-code-scan/tests/shipped_rules.rs"
+          cd "$v2"
+          set +e
+          cargo +1.93.0 test --locked -p asc-capability-code-scan --test shipped_rules full_bash_scan_keeps_persistence_evidence_near_the_rpc_frame_limit -- --exact --nocapture > "$RUNNER_TEMP/original-scan.log" 2>&1
+          status=$?
+          set -e
+          tail -45 "$RUNNER_TEMP/original-scan.log"
+          test "$status" -eq 101
+          grep -F '1260033 bytes: scan error: engine resource exhausted' "$RUNNER_TEMP/original-scan.log"
+      - name: Check the candidate with the complete Bash rule set
+        run: |
+          v2=upstream/src/agent-sec-core/v2
+          crate="$v2/crates/asc-capability-code-scan"
+          cp engine.rs "$crate/src/engine.rs"
+          mkdir -p "$crate/src/engine"
+          cp prefilter.rs "$crate/src/engine/prefilter.rs"
+          cp Cargo.toml "$crate/Cargo.toml"
+          cd "$v2"
           python3 - <<'PY'
           from pathlib import Path
-          manifest = Path('crates/asc-capability-code-scan/Cargo.toml')
-          text = manifest.read_text()
-          anchor = '[dev-dependencies]\n'
-          assert text.count(anchor) == 1
-          manifest.write_text(text.replace(anchor, anchor + 'regex.workspace = true\n'))
+          lockfile = Path('Cargo.lock')
+          text = lockfile.read_text()
+          start = text.index('name = "asc-capability-code-scan"')
+          end = text.index('\n[[package]]', start)
+          package = text[start:end]
+          dependency = ' "fancy-regex",\n'
+          assert package.count(dependency) == 1
+          lockfile.write_text(text[:start] + package.replace(dependency, dependency + ' "regex",\n') + text[end:])
           PY
-          rustup toolchain install 1.93.0 --profile minimal
-          cargo +1.93.0 test -p asc-capability-code-scan --test engine_prefilter_probe -- --nocapture --test-threads=1
-      - name: Confirm dependency resolution changed only the scratch edge
-        if: always()
-        working-directory: source/src/agent-sec-core/v2
-        run: git diff -- Cargo.lock
+          prefix=crates/asc-capability-code-scan
+          rustfmt +1.93.0 --edition 2024 "$prefix/src/engine.rs" "$prefix/src/engine/prefilter.rs" "$prefix/tests/shipped_rules.rs"
+          git diff --check
+          git hash-object "$prefix/src/engine.rs" "$prefix/src/engine/prefilter.rs" "$prefix/tests/shipped_rules.rs"
+          cargo +1.93.0 test --locked -p asc-capability-code-scan -- --nocapture
+          cargo +1.93.0 clippy --locked -p asc-capability-code-scan --all-targets -- -D warnings
