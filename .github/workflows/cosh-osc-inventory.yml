@@ -25,6 +25,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: source/src/cosh-ng
+      - name: Install test audit dependency
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
       - run: python3 payload/validate.py
       - uses: actions/upload-artifact@v4
         if: always()
