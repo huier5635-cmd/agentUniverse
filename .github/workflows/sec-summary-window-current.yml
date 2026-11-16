@@ -1,0 +1,93 @@
+name: Verify ANOLISA 8996 on current main
+
+on:
+  push:
+    branches: [ci/sec-summary-window-current-20261117]
+
+permissions:
+  contents: read
+
+jobs:
+  summary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: agentic-os-org/ANOLISA
+          ref: ac213486830fd73c0c8ce844ba0a3cb370b48780
+          path: upstream
+          persist-credentials: false
+          sparse-checkout: |
+            src/agent-sec-core
+            .github
+            specs
+      - uses: actions/checkout@v4
+        with:
+          repository: huier5635-cmd/ANOLISA
+          ref: cd9de9bd9048ec79eb6a8b3da0da61b4adcd3ea5
+          path: candidate
+          persist-credentials: false
+          sparse-checkout: src/agent-sec-core
+      - name: Verify candidate commit and its three files
+        working-directory: candidate
+        run: |
+          test "$(git rev-parse HEAD)" = cd9de9bd9048ec79eb6a8b3da0da61b4adcd3ea5
+          test "$(git hash-object src/agent-sec-core/agent-sec-cli/src/agent_sec_cli/security_events/summary_formatter.py)" = fdbe3b99a8d7fc16361d9f47428a5382e6b58bca
+          test "$(git hash-object src/agent-sec-core/docs/design/SECURITY_ACTIONS_REFERENCE_zh.md)" = 6b0f44bf5d71c4e4720315aaa98c00665f47967f
+          test "$(git hash-object src/agent-sec-core/tests/unit-test/security_events/test_summary_formatter_compliance.py)" = b0b91788caea9dd7445a90dc16f35886aa771925
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.9.5
+          python-version: 3.11.6
+          enable-cache: true
+          cache-dependency-glob: upstream/src/agent-sec-core/agent-sec-cli/uv.lock
+      - name: Install locked Python runtime and development dependencies
+        working-directory: upstream/src/agent-sec-core
+        run: |
+          uv sync --project agent-sec-cli --locked --no-install-project --group dev
+          uv run --project agent-sec-cli --no-sync python -c 'import sys; assert sys.version_info[:3] == (3, 11, 6); print(sys.version)'
+      - name: Prove the regression fails on unchanged production
+        working-directory: upstream/src/agent-sec-core
+        env:
+          PYTHONPATH: agent-sec-cli/src
+        run: |
+          cp "$GITHUB_WORKSPACE/candidate/src/agent-sec-core/tests/unit-test/security_events/test_summary_formatter_compliance.py" tests/unit-test/security_events/
+          mkdir -p "$GITHUB_WORKSPACE/evidence"
+          set +e
+          uv run --project agent-sec-cli --no-sync python -m pytest tests/unit-test/security_events/test_summary_formatter_compliance.py -q --junitxml="$GITHUB_WORKSPACE/evidence/original.xml" > "$GITHUB_WORKSPACE/evidence/original.txt" 2>&1
+          result=$?
+          set -e
+          cat "$GITHUB_WORKSPACE/evidence/original.txt"
+          test "$result" -eq 1
+          uv run --project agent-sec-cli --no-sync python - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          suites = ET.parse(Path(os.environ['GITHUB_WORKSPACE']) / 'evidence/original.xml').getroot().findall('testsuite')
+          counts = {key: sum(int(suite.get(key, 0)) for suite in suites) for key in ['tests', 'failures', 'errors', 'skipped']}
+          assert counts == {'tests': 10, 'failures': 7, 'errors': 0, 'skipped': 0}, counts
+          print(counts)
+          PY
+      - name: Validate fixed production and existing security-event cases
+        working-directory: upstream/src/agent-sec-core
+        env:
+          PYTHONPATH: agent-sec-cli/src
+        run: |
+          cp "$GITHUB_WORKSPACE/candidate/src/agent-sec-core/agent-sec-cli/src/agent_sec_cli/security_events/summary_formatter.py" agent-sec-cli/src/agent_sec_cli/security_events/summary_formatter.py
+          cp "$GITHUB_WORKSPACE/candidate/src/agent-sec-core/docs/design/SECURITY_ACTIONS_REFERENCE_zh.md" docs/design/SECURITY_ACTIONS_REFERENCE_zh.md
+          uv run --project agent-sec-cli --no-sync python -m black --check agent-sec-cli/src/agent_sec_cli/security_events/summary_formatter.py tests/unit-test/security_events/test_summary_formatter_compliance.py
+          uv run --project agent-sec-cli --no-sync python -m isort --settings-path agent-sec-cli/pyproject.toml --check-only agent-sec-cli/src/agent_sec_cli/security_events/summary_formatter.py tests/unit-test/security_events/test_summary_formatter_compliance.py
+          uv run --project agent-sec-cli --no-sync python -m ruff check --config agent-sec-cli/pyproject.toml agent-sec-cli/src/agent_sec_cli/security_events/summary_formatter.py tests/unit-test/security_events/test_summary_formatter_compliance.py
+          uv run --project agent-sec-cli --no-sync python -m pytest tests/unit-test/security_events/ -q --cov=agent_sec_cli.security_events.summary_formatter --cov-branch --cov-report=term-missing --cov-report=json:"$GITHUB_WORKSPACE/evidence/coverage.json" --junitxml="$GITHUB_WORKSPACE/evidence/fixed.xml" | tee "$GITHUB_WORKSPACE/evidence/fixed.txt"
+          git diff --check
+      - name: Upload exact validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sec-summary-window-evidence
+          path: evidence/
+          if-no-files-found: error
