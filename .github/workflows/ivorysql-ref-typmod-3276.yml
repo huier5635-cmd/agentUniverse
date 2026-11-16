@@ -32,26 +32,22 @@ jobs:
           sudo apt-get install -y bison flex libreadline-dev zlib1g-dev uuid-dev libicu-dev libxml2-dev libxslt1-dev libcurl4-openssl-dev
           ./configure --prefix="$prefix" --enable-cassert --with-uuid=e2fs --with-icu --with-libxml --with-libxslt
           make -j"$(nproc)" world-bin > "$RUNNER_TEMP/ref-build.log" 2>&1 || { tail -n 100 "$RUNNER_TEMP/ref-build.log"; exit 1; }
-          make -j1 install-world-bin > "$RUNNER_TEMP/ref-install.log" 2>&1 || { tail -n 100 "$RUNNER_TEMP/ref-install.log"; exit 1; }
-      - name: Reproduce the REF row description assertion
+      - name: Reproduce the REF assertion using the Oracle regression fixture
         working-directory: upstream
         run: |
           set -euo pipefail
-          bin="$IVORY_REF_PREFIX/bin"
-          cluster="$RUNNER_TEMP/ref-baseline"
-          sock=$(mktemp -d)
-          "$bin/initdb" -D "$cluster" -m oracle -C normal --auth trust --no-locale
-          "$bin/pg_ctl" -D "$cluster" -l "$RUNNER_TEMP/ref-baseline.log" -o "-p 55441 -k $sock -c listen_addresses= -c ivorysql.port=55442" -w start
-          trap '"$bin/pg_ctl" -D "$cluster" -m immediate -w stop' EXIT
-          psql=( "$bin/psql" -X -h "$sock" -p 55442 -d postgres -v ON_ERROR_STOP=1 )
-          test "$("${psql[@]}" -Atc 'SHOW ivorysql.compatible_mode')" = oracle
-          "${psql[@]}" -c 'CREATE TYPE ref_probe_t AS OBJECT (n integer); CREATE TABLE ref_probe(p REF ref_probe_t);'
-          if "${psql[@]}" -c 'SELECT p FROM ref_probe;' > "$RUNNER_TEMP/ref-baseline-query.log" 2>&1; then
-            echo 'Baseline unexpectedly described the REF column without aborting'
+          patch="$GITHUB_WORKSPACE/evidence/ci-artifacts/ivorysql-ref-typmod/3276.patch"
+          sql=src/oracle_test/regress/sql/ref_type.sql
+          git apply --include="$sql" "$patch"
+          if make -j1 oracle-check-tests TESTS=ref_type > "$RUNNER_TEMP/ref-baseline-suite.log" 2>&1; then
+            echo 'Baseline did not fail'
             exit 1
           fi
-          cat "$RUNNER_TEMP/ref-baseline-query.log"
-          grep -F '*typmod == -1' "$RUNNER_TEMP/ref-baseline.log"
+          tail -n 55 "$RUNNER_TEMP/ref-baseline-suite.log"
+          find src/oracle_test/regress -type f \( -path '*/log/*' -o -name '*.log' \) -print0 | xargs -0 -r grep -F '*typmod == -1' > "$RUNNER_TEMP/ref-baseline-assert.log"
+          test -s "$RUNNER_TEMP/ref-baseline-assert.log"
+          cat "$RUNNER_TEMP/ref-baseline-assert.log"
+          git restore -- "$sql"
       - name: Verify the exact patch and run the upstream REF suite
         working-directory: upstream
         run: |
