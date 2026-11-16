@@ -1,0 +1,60 @@
+diff --git a/src/backend/oracle_parser/ora_gram.y b/src/backend/oracle_parser/ora_gram.y
+index b9e033ab77a42c445be523787a79117969b59b14..b054ee4a54dbb5357cd2e96ee7096cff47b82bd6 100644
+--- a/src/backend/oracle_parser/ora_gram.y
++++ b/src/backend/oracle_parser/ora_gram.y
+@@ -4509,7 +4509,7 @@ columnDef:	ColId Typename opt_column_storage opt_column_compression create_gener
+ 			| ColId REF_LA RefTypeName opt_column_storage opt_column_compression create_generic_options ColQualList column_invisible
+ 				{
+ 					ColumnDef *n = makeNode(ColumnDef);
+-					TypeName *t = makeNode(TypeName);
++					TypeName *t = makeTypeNameFromNameList(NIL);
+ 
+ 					t->refTypeName = makeTypeNameFromNameList($3);
+ 					t->location = @2;
+@@ -16731,7 +16731,7 @@ ObjectTypeElement:
+ 			| ColId REF_LA RefTypeName
+ 				{
+ 					ColumnDef *n = makeNode(ColumnDef);
+-					TypeName *t = makeNode(TypeName);
++					TypeName *t = makeTypeNameFromNameList(NIL);
+ 
+ 					n->colname = $1;
+ 					t->refTypeName = makeTypeNameFromNameList($3);
+diff --git a/src/oracle_test/regress/expected/ref_type.out b/src/oracle_test/regress/expected/ref_type.out
+index 98213c7b676483a598fd7823444e2f79ec27b8ff..0fe4c1088f03eeefcf9242364b160bf81a18bf05 100644
+--- a/src/oracle_test/regress/expected/ref_type.out
++++ b/src/oracle_test/regress/expected/ref_type.out
+@@ -37,6 +37,15 @@ DROP TABLE ref_reg_partitioned;
+ CREATE TABLE ref_reg_people OF ref_reg_person;
+ CREATE TABLE ref_reg_others OF ref_reg_other;
+ CREATE TABLE ref_reg_holder (person REF ref_reg_person NOT NULL);
++-- Describing raw REF columns must work for both grammar productions.
++\pset format unaligned
++SELECT person FROM ref_reg_holder;
++person
++(0 rows)
++SELECT parent FROM ref_reg_people;
++parent
++(0 rows)
++\pset format aligned
+ INSERT INTO ref_reg_people (name) VALUES ('root'), ('child');
+ INSERT INTO ref_reg_others (name) VALUES ('other');
+ UPDATE ref_reg_people p SET parent =
+diff --git a/src/oracle_test/regress/sql/ref_type.sql b/src/oracle_test/regress/sql/ref_type.sql
+index 50cb9c02c66033045e3de075358b5ae396157a07..2ef04052b5197251e2ccf1e0a6f02d9498e7efd1 100644
+--- a/src/oracle_test/regress/sql/ref_type.sql
++++ b/src/oracle_test/regress/sql/ref_type.sql
+@@ -28,6 +28,12 @@ CREATE TABLE ref_reg_people OF ref_reg_person;
+ CREATE TABLE ref_reg_others OF ref_reg_other;
+ CREATE TABLE ref_reg_holder (person REF ref_reg_person NOT NULL);
+ 
++-- Describing raw REF columns must work for both grammar productions.
++\pset format unaligned
++SELECT person FROM ref_reg_holder;
++SELECT parent FROM ref_reg_people;
++\pset format aligned
++
+ INSERT INTO ref_reg_people (name) VALUES ('root'), ('child');
+ INSERT INTO ref_reg_others (name) VALUES ('other');
+ UPDATE ref_reg_people p SET parent =
+
