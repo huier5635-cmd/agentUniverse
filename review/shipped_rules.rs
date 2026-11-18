@@ -60,7 +60,11 @@ fn full_bash_scan_preserves_findings_across_prefilter_threshold() {
         assert_eq!(code.len(), len);
         let result = scan(&code, Language::Bash, None, "regex");
         assert!(result.ok, "{len} bytes: {}", result.summary);
-        let finding = result.findings.iter().find(|f| f.rule_id == "shell-persistence").unwrap();
+        let finding = result
+            .findings
+            .iter()
+            .find(|f| f.rule_id == "shell-persistence")
+            .unwrap();
         assert_eq!(finding.evidence, ["systemctl enable"]);
     }
 }
@@ -71,9 +75,17 @@ fn full_bash_scan_handles_many_rejected_persistence_candidates() {
     let code = block.repeat(255_000 / block.len());
     assert!((250_000..262_144).contains(&code.len()));
     let result = scan(&code, Language::Bash, None, "regex");
-    eprintln!("rejection-heavy Bash scan: {} bytes, {} ms", code.len(), result.elapsed_ms);
+    eprintln!(
+        "rejection-heavy Bash scan: {} bytes, {} ms",
+        code.len(),
+        result.elapsed_ms
+    );
     assert!(result.ok, "{}", result.summary);
-    let finding = result.findings.iter().find(|f| f.rule_id == "shell-persistence").unwrap();
+    let finding = result
+        .findings
+        .iter()
+        .find(|f| f.rule_id == "shell-persistence")
+        .unwrap();
     assert_eq!(finding.evidence, vec!["crontab"; 255_000 / block.len()]);
     assert!(result.elapsed_ms < 5_000);
 }

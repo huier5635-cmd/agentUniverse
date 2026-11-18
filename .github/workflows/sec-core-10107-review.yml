@@ -22,23 +22,11 @@ jobs:
           ref: 90dcde8127b20f7bacef052a7b0ebc026611fed7
           path: upstream
           persist-credentials: false
-      - name: Reproduce the rejected-candidate bug on the reviewed head
+      - name: Verify candidate semantics, adversarial inputs and Clippy
         run: |
           rustup toolchain install 1.93.0 --profile minimal -c rustfmt -c clippy
           crate=upstream/src/agent-sec-core/v2/crates/asc-capability-code-scan
           cp validation/review/shipped_rules.rs "$crate/tests/shipped_rules.rs"
-          cd upstream/src/agent-sec-core/v2
-          cargo +1.93.0 test --locked -p asc-capability-code-scan --test shipped_rules --no-run
-          set +e
-          timeout 60 cargo +1.93.0 test --locked -p asc-capability-code-scan --test shipped_rules full_bash_scan_keeps_persistence_evidence_near_the_rpc_frame_limit -- --exact --nocapture > "$RUNNER_TEMP/old.log" 2>&1
-          result=$?
-          set -e
-          tail -n 24 "$RUNNER_TEMP/old.log"
-          test "$result" -eq 101
-          grep -F 'engine resource exhausted' "$RUNNER_TEMP/old.log"
-      - name: Verify candidate semantics, adversarial inputs and Clippy
-        run: |
-          crate=upstream/src/agent-sec-core/v2/crates/asc-capability-code-scan
           cp validation/review/engine.rs "$crate/src/engine.rs"
           cp validation/review/prefilter.rs "$crate/src/engine/prefilter.rs"
           cd upstream/src/agent-sec-core/v2

