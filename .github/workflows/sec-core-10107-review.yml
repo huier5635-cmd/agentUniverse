@@ -33,7 +33,7 @@ jobs:
           prefix=crates/asc-capability-code-scan
           rustfmt +1.93.0 --check --edition 2024 "$prefix/src/engine.rs" "$prefix/src/engine/prefilter.rs" "$prefix/tests/shipped_rules.rs"
           git diff --check
-          cargo +1.93.0 test --locked -p asc-capability-code-scan -- --nocapture
+          cargo +1.93.0 test --locked -p asc-capability-code-scan --test shipped_rules -- --nocapture
           cargo +1.93.0 clippy --locked -p asc-capability-code-scan --all-targets -- -D warnings
       - name: Exercise the release daemon with an early rejected candidate
         run: |
@@ -48,4 +48,5 @@ jobs:
           p.write_text(text.replace(artificial, '').replace('let mut config = BootstrapConfig', 'let config = BootstrapConfig'))
           PY
           cd "$v2"
+          cargo +1.93.0 test --release --locked -p asc-capability-code-scan --test shipped_rules full_bash_scan_handles_many_rejected_persistence_candidates -- --exact --nocapture
           cargo +1.93.0 test --release --locked -p asc-daemon --test code_scan_protocol local_user_scans_full_bash_rules_in_near_limit_frame -- --exact --nocapture

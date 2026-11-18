@@ -87,7 +87,13 @@ fn full_bash_scan_handles_many_rejected_persistence_candidates() {
         .find(|f| f.rule_id == "shell-persistence")
         .unwrap();
     assert_eq!(finding.evidence, vec!["crontab"; 255_000 / block.len()]);
-    assert!(result.elapsed_ms < 5_000);
+    // Debug builds run the full shipped rule set without optimizations.
+    let max_ms = if cfg!(debug_assertions) {
+        15_000
+    } else {
+        5_000
+    };
+    assert!(result.elapsed_ms < max_ms);
 }
 
 /// Rule file stems present on disk for `language`, excluding shared data files.
