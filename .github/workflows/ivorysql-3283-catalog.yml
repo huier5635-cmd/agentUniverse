@@ -1,0 +1,31 @@
+name: Verify IvorySQL REF catalog regressions
+on:
+  push:
+    branches: [ci/ivorysql-3283-catalog-20261119]
+permissions:
+  contents: read
+jobs:
+  ref-catalog:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: huier5635-cmd/IvorySQL
+          ref: 02c3f53ed1eefe1c0316edf989eb574cea0b1a0c
+          persist-credentials: false
+      - name: Build and run the expanded REF suite
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 02c3f53ed1eefe1c0316edf989eb574cea0b1a0c
+          test "$(git hash-object src/oracle_test/regress/sql/ref_type.sql)" = 1f35a47963c332d35d4ed47fb776129b47ef962d
+          test "$(git hash-object src/oracle_test/regress/expected/ref_type.out)" = 22bda845c40eecc172b31428c73cf5a80baa041e
+          sudo apt-get update -q
+          sudo apt-get install -y bison flex libreadline-dev zlib1g-dev uuid-dev libicu-dev libxml2-dev libxslt1-dev libcurl4-openssl-dev
+          ./configure --prefix="$RUNNER_TEMP/ivory-ref" --enable-cassert --with-uuid=e2fs --with-icu --with-libxml --with-libxslt
+          make -j"$(nproc)" world-bin > "$RUNNER_TEMP/build.log" 2>&1 || { tail -n 90 "$RUNNER_TEMP/build.log"; exit 1; }
+          make -j1 oracle-check-tests TESTS=ref_type > "$RUNNER_TEMP/test.log" 2>&1 || { tail -n 60 "$RUNNER_TEMP/test.log"; cat src/oracle_test/regress/regression.diffs; exit 1; }
+          grep -E '^ok .*ref_type|All .* tests passed' "$RUNNER_TEMP/test.log"
+          grep 'ref_reg_holder|person|-1' src/oracle_test/regress/results/ref_type.out
+          grep 'ref_reg_people|parent|-1' src/oracle_test/regress/results/ref_type.out
+          git diff --check
