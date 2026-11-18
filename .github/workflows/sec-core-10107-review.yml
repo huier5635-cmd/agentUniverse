@@ -1,0 +1,63 @@
+name: Verify bounded candidate checks for PR 10107
+
+on:
+  push:
+    branches: [ci/sec-core-10107-review-20261119]
+
+permissions:
+  contents: read
+
+jobs:
+  scanner:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: validation
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: huier5635-cmd/ANOLISA
+          ref: 90dcde8127b20f7bacef052a7b0ebc026611fed7
+          path: upstream
+          persist-credentials: false
+      - name: Reproduce the rejected-candidate bug on the reviewed head
+        run: |
+          rustup toolchain install 1.93.0 --profile minimal -c rustfmt -c clippy
+          crate=upstream/src/agent-sec-core/v2/crates/asc-capability-code-scan
+          cp validation/review/shipped_rules.rs "$crate/tests/shipped_rules.rs"
+          cd upstream/src/agent-sec-core/v2
+          cargo +1.93.0 test --locked -p asc-capability-code-scan --test shipped_rules --no-run
+          set +e
+          timeout 60 cargo +1.93.0 test --locked -p asc-capability-code-scan --test shipped_rules full_bash_scan_keeps_persistence_evidence_near_the_rpc_frame_limit -- --exact --nocapture > "$RUNNER_TEMP/old.log" 2>&1
+          result=$?
+          set -e
+          tail -n 24 "$RUNNER_TEMP/old.log"
+          test "$result" -eq 101
+          grep -F 'engine resource exhausted' "$RUNNER_TEMP/old.log"
+      - name: Verify candidate semantics, adversarial inputs and Clippy
+        run: |
+          crate=upstream/src/agent-sec-core/v2/crates/asc-capability-code-scan
+          cp validation/review/engine.rs "$crate/src/engine.rs"
+          cp validation/review/prefilter.rs "$crate/src/engine/prefilter.rs"
+          cd upstream/src/agent-sec-core/v2
+          prefix=crates/asc-capability-code-scan
+          rustfmt +1.93.0 --check --edition 2024 "$prefix/src/engine.rs" "$prefix/src/engine/prefilter.rs" "$prefix/tests/shipped_rules.rs"
+          git diff --check
+          cargo +1.93.0 test --locked -p asc-capability-code-scan -- --nocapture
+          cargo +1.93.0 clippy --locked -p asc-capability-code-scan --all-targets -- -D warnings
+      - name: Exercise the release daemon with an early rejected candidate
+        run: |
+          v2=upstream/src/agent-sec-core/v2
+          cat validation/review/daemon-large-scan-probe.rs >> "$v2/apps/asc-daemon/tests/code_scan_protocol.rs"
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('upstream/src/agent-sec-core/v2/apps/asc-daemon/tests/code_scan_protocol.rs')
+          text = p.read_text()
+          artificial = '        config.service.request_read_timeout = Duration::from_millis(50);\n'
+          assert text.count(artificial) == 1
+          p.write_text(text.replace(artificial, '').replace('let mut config = BootstrapConfig', 'let config = BootstrapConfig'))
+          PY
+          cd "$v2"
+          cargo +1.93.0 test --release --locked -p asc-daemon --test code_scan_protocol local_user_scans_full_bash_rules_in_near_limit_frame -- --exact --nocapture
