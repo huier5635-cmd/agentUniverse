@@ -1,0 +1,60 @@
+name: IvorySQL pg_stat_monitor Windows validation
+on: push
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Windows build tools
+        shell: pwsh
+        run: |
+          choco install winflexbison3 -y --no-progress
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip install 'meson>=1.3,<2' ninja
+      - name: Fetch pinned database and extension
+        shell: pwsh
+        run: |
+          git -c core.longpaths=true init db
+          git -C db config core.longpaths true
+          git -C db fetch --depth=1 https://github.com/IvorySQL/IvorySQL.git 475ab1956568da0e6e796902bf6e13a916396edd
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git -C db checkout --detach FETCH_HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          curl.exe --fail --location --retry 2 --output stat.tar.gz https://codeload.github.com/percona/pg_stat_monitor/tar.gz/1de4d4c91c9b2bbd2cad330d51d4b06e9c597ebe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory db/contrib/pg_stat_monitor | Out-Null
+          tar.exe -xzf stat.tar.gz --strip-components=1 -C db/contrib/pg_stat_monitor
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content db/contrib/meson.build "`nsubdir('pg_stat_monitor')"
+      - name: Configure with MSVC
+        working-directory: db
+        shell: pwsh
+        run: meson setup build --vsenv --auto-features=disabled -Dssl=none -Dbuildtype=release
+      - name: Compare stock and ported Windows build
+        working-directory: db
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          meson compile -C build pg_stat_monitor *> baseline.log
+          $baselineExit = $LASTEXITCODE
+          if ($baselineExit -eq 0 -or -not (Select-String -Path baseline.log -Pattern 'arpa/inet.h' -Quiet)) {
+            Get-Content baseline.log -Tail 80
+            throw "Stock baseline did not fail at the expected POSIX header (exit $baselineExit)"
+          }
+          Select-String -Path baseline.log -Pattern 'arpa/inet.h' | Select-Object -First 3
+          $file = 'contrib/pg_stat_monitor/src/pg_stat_monitor.c'
+          $source = [IO.File]::ReadAllText((Resolve-Path $file))
+          $header = '#include <arpa/inet.h>'
+          if (($source.Split($header, [StringSplitOptions]::None)).Length -ne 2) { throw 'Unexpected source' }
+          $patch = "#ifndef WIN32`n#include <arpa/inet.h>`n#endif"
+          [IO.File]::WriteAllText((Resolve-Path $file), $source.Replace($header, $patch))
+          meson compile -C build pg_stat_monitor
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem build/contrib/pg_stat_monitor -Filter 'pg_stat_monitor.dll' | Select-Object Name,Length
