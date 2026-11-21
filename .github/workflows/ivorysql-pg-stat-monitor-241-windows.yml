@@ -1,0 +1,109 @@
+name: IvorySQL pg_stat_monitor 2.4.1 Windows verification
+on: push
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Windows build tools
+        shell: pwsh
+        run: |
+          choco install winflexbison3 -y --no-progress
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip install 'meson>=1.3,<2' ninja
+      - name: Fetch pinned database and extension
+        shell: pwsh
+        run: |
+          git -c core.longpaths=true init db
+          git -C db config core.longpaths true
+          git -C db fetch --depth=1 https://github.com/Muzzammil242/IvorySQL.git 7c1742cde16b699045c94fe053cc8798c1e093cd
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git -C db checkout --detach FETCH_HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          curl.exe --fail --location --retry 2 --output stat.tar.gz https://codeload.github.com/percona/pg_stat_monitor/tar.gz/33eeadf2a4b7bfe9797fbd867d506a4c0cb176db
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory db/contrib/pg_stat_monitor | Out-Null
+          tar.exe -xzf stat.tar.gz --strip-components=1 -C db/contrib/pg_stat_monitor
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content db/contrib/meson.build "`nsubdir('pg_stat_monitor')"
+      - name: Configure with MSVC
+        working-directory: db
+        shell: pwsh
+        run: meson setup build --vsenv --auto-features=disabled -Duuid=none -Dssl=none -Dbuildtype=release --prefix "$env:GITHUB_WORKSPACE/pg-install"
+      - name: Compare stock and ported Windows build
+        working-directory: db
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          meson compile -C build pg_stat_monitor *> baseline.log
+          $baselineExit = $LASTEXITCODE
+          if ($baselineExit -eq 0 -or -not (Select-String -Path baseline.log -Pattern 'hash_query\.c.*(C2059|C1019)' -Quiet)) {
+            Get-Content baseline.log -Tail 80
+            throw "Stock baseline did not fail at the expected MSVC preprocessing error (exit $baselineExit)"
+          }
+          Select-String -Path baseline.log -Pattern 'hash_query\.c.*(C2059|C1019)' | Select-Object -First 3
+          $file = 'contrib/pg_stat_monitor/src/hash_query.c'
+          $source = [IO.File]::ReadAllText((Resolve-Path $file))
+          $before = @'
+          		dsa = dsa_create_in_place(pgsm->raw_dsa_area,
+          								  pgsm_query_area_size(),
+          #if PG_VERSION_NUM >= 190000
+          								  LWLockNewTrancheId("pg_stat_monitor_dsa"), 0);
+          #else
+          								  LWLockNewTrancheId(), 0);
+          #endif
+          '@
+          $after = @'
+          #if PG_VERSION_NUM >= 190000
+          		tranche_id = LWLockNewTrancheId("pg_stat_monitor_dsa");
+          #else
+          		tranche_id = LWLockNewTrancheId();
+          #endif
+          		dsa = dsa_create_in_place(pgsm->raw_dsa_area,
+          								  pgsm_query_area_size(),
+          								  tranche_id, 0);
+          '@
+          $before = $before.Replace("`r`n", "`n")
+          $after = $after.Replace("`r`n", "`n")
+          if (($source.Split($before, [StringSplitOptions]::None)).Length -ne 2) { throw 'Unexpected DSA call' }
+          $declaration = "`t`tchar`t   *p = (char *) pgsm;"
+          if (($source.Split($declaration, [StringSplitOptions]::None)).Length -ne 2) { throw 'Unexpected declarations' }
+          $after = $source.Replace($before, $after).Replace($declaration, "$declaration`n`t`tint`t`t`ttranche_id;")
+          [IO.File]::WriteAllText((Resolve-Path $file), $after)
+          meson compile -C build pg_stat_monitor
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem build/contrib/pg_stat_monitor -Filter 'pg_stat_monitor.dll' | Select-Object Name,Length
+      - name: Install and test monitoring over IPv4
+        working-directory: db
+        shell: pwsh
+        run: |
+          meson install -C build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $bin = "$env:GITHUB_WORKSPACE/pg-install/bin"
+          $cluster = "$env:RUNNER_TEMP/ivory-stat-monitor"
+          $pglog = "$env:RUNNER_TEMP/ivory-stat-monitor.log"
+          $env:Path = "$bin;$env:Path"
+          & "$bin/initdb.exe" -D $cluster -U postgres -A trust --encoding=UTF8 --no-locale
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -LiteralPath "$cluster/postgresql.conf" -Value "shared_preload_libraries = 'pg_stat_monitor'"
+          & "$bin/pg_ctl.exe" -D $cluster -l $pglog -o "-p 55437 -h 127.0.0.1" -w start
+          if ($LASTEXITCODE -ne 0) { Get-Content $pglog; exit $LASTEXITCODE }
+          try {
+            $connection = @('-X', '-v', 'ON_ERROR_STOP=1', '-h', '127.0.0.1', '-p', '55437', '-U', 'postgres', '-d', 'postgres')
+            & "$bin/psql.exe" @connection -c "CREATE EXTENSION pg_stat_monitor;"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & "$bin/psql.exe" @connection -c "SELECT 42 AS monitor_smoke;"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $observed = & "$bin/psql.exe" @connection -Atc "SELECT EXISTS (SELECT 1 FROM pg_stat_monitor WHERE query LIKE '%AS monitor_smoke%' AND client_ip = '127.0.0.1'::inet);"
+            if ($LASTEXITCODE -ne 0 -or $observed -ne 't') { throw 'Missing monitored query or incorrect client IP' }
+            Write-Output 'Confirmed extension startup, query recording and IPv4 address.'
+          } finally {
+            & "$bin/pg_ctl.exe" -D $cluster -m fast -w stop
+          }
