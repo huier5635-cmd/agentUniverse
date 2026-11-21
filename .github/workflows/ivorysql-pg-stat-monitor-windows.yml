@@ -33,6 +33,15 @@ jobs:
           tar.exe -xzf stat.tar.gz --strip-components=1 -C db/contrib/pg_stat_monitor
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Add-Content db/contrib/meson.build "`nsubdir('pg_stat_monitor')"
+      - name: Match the Oracle keyword DLL declaration to its generated declaration
+        working-directory: db
+        shell: pwsh
+        run: |
+          $header = 'src/include/oracle_parser/ora_keywords.h'
+          $contents = [IO.File]::ReadAllText((Resolve-Path $header))
+          $previous = 'extern const ScanKeywordList OraScanKeywords;'
+          if (($contents.Split($previous, [StringSplitOptions]::None)).Length -ne 2) { throw 'Unexpected Oracle keyword declaration' }
+          [IO.File]::WriteAllText((Resolve-Path $header), $contents.Replace($previous, 'extern PGDLLIMPORT const ScanKeywordList OraScanKeywords;'))
       - name: Configure with MSVC
         working-directory: db
         shell: pwsh
