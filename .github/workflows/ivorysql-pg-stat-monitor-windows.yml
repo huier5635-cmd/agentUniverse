@@ -36,7 +36,7 @@ jobs:
       - name: Configure with MSVC
         working-directory: db
         shell: pwsh
-        run: meson setup build --vsenv --auto-features=disabled -Dssl=none -Dbuildtype=release
+        run: meson setup build --vsenv --auto-features=disabled -Duuid=none -Dssl=none -Dbuildtype=release
       - name: Compare stock and ported Windows build
         working-directory: db
         shell: pwsh
