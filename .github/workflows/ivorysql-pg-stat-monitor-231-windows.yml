@@ -33,27 +33,27 @@ jobs:
           tar.exe -xzf stat.tar.gz --strip-components=1 -C db/contrib/pg_stat_monitor
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Add-Content db/contrib/meson.build "`nsubdir('pg_stat_monitor')"
-      - name: Configure with MSVC
-        working-directory: db
-        shell: pwsh
-        run: meson setup build --vsenv --auto-features=disabled -Duuid=none -Dssl=none -Dbuildtype=release --prefix "$env:GITHUB_WORKSPACE/pg-install"
-      - name: Compare the released Meson configuration and corrected source list
+      - name: Verify the released Meson failure and build with the backport
         working-directory: db
         shell: pwsh
         run: |
           $PSNativeCommandUseErrorActionPreference = $false
-          meson compile -C build pg_stat_monitor *> baseline.log
-          if ($LASTEXITCODE -eq 0 -or -not (Select-String -Path baseline.log -Pattern 'LNK20(01|19)' -Quiet)) {
-            Get-Content baseline.log -Tail 80
-            throw 'The released configuration did not reproduce the expected missing-symbol failure.'
+          $options = @('--vsenv', '--auto-features=disabled', '-Duuid=none', '-Dssl=none', '-Dbuildtype=release', '--prefix', "$env:GITHUB_WORKSPACE/pg-install")
+          meson setup baseline @options *> baseline.log
+          if ($LASTEXITCODE -eq 0 -or -not (Select-String -Path baseline.log -Pattern 'pg_stat_monitor.*Expecting rbracket' -Quiet)) {
+            Get-Content baseline.log -Tail 55
+            throw 'The released configuration did not reproduce its Meson syntax error.'
           }
-          Select-String -Path baseline.log -Pattern 'LNK20(01|19)' | Select-Object -First 6
+          Select-String -Path baseline.log -Pattern 'pg_stat_monitor.*Expecting rbracket' | Select-Object -First 1
           $meson = 'contrib/pg_stat_monitor/meson.build'
           $contents = [IO.File]::ReadAllText((Resolve-Path $meson))
-          $original = "  'pg_stat_monitor.c',"
-          $corrected = "$original`n  'hash_query.c',`n  'guc.c',"
-          if (($contents.Split($original, [StringSplitOptions]::None)).Length -ne 2) { throw 'Unexpected pg_stat_monitor source list' }
-          [IO.File]::WriteAllText((Resolve-Path $meson), $contents.Replace($original, $corrected))
+          $mainSource = "  'pg_stat_monitor.c',"
+          $contents = $contents.Replace($mainSource, "$mainSource`n  'hash_query.c',`n  'guc.c',")
+          $contents = $contents.Replace("'different_parent_queries'`n", "'different_parent_queries',`n")
+          $contents = $contents.Replace("'level_tracking'`n", "'level_tracking',`n")
+          [IO.File]::WriteAllText((Resolve-Path $meson), $contents)
+          meson setup build @options
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           meson compile -C build pg_stat_monitor
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-ChildItem build/contrib/pg_stat_monitor -Filter 'pg_stat_monitor.dll' | Select-Object Name,Length
