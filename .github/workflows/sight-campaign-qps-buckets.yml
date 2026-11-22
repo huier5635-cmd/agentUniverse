@@ -1,0 +1,63 @@
+name: AgentSight campaign QPS validation
+on:
+  push:
+    branches:
+      - ci/sight-campaign-qps-buckets
+
+permissions:
+  contents: read
+
+jobs:
+  campaign:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      ANOLISA_BASE: 727126202fe2a5baaca3fbf13c25721d3457e1f9
+      BENCHMARK: src/agentsight/scripts/benchmark
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11.6'
+      - name: Materialize the pinned upstream benchmark and apply the patch
+        run: |
+          set -euo pipefail
+          git init upstream
+          git -C upstream remote add origin https://github.com/agentic-os-org/ANOLISA.git
+          git -C upstream config remote.origin.promisor true
+          git -C upstream config remote.origin.partialclonefilter blob:none
+          git -C upstream sparse-checkout set "$BENCHMARK"
+          git -C upstream fetch --depth=1 --filter=blob:none origin "$ANOLISA_BASE"
+          test "$(git -C upstream rev-parse FETCH_HEAD)" = "$ANOLISA_BASE"
+          git -C upstream checkout --detach FETCH_HEAD
+          git -C upstream apply --check "$GITHUB_WORKSPACE/validation/campaign-qps.patch"
+          git -C upstream apply "$GITHUB_WORKSPACE/validation/campaign-qps.patch"
+          git -C upstream diff --check
+          python -m pip install -r "upstream/$BENCHMARK/requirements.txt"
+      - name: Confirm the four false QPS buckets on the unmodified reporter
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          reporter="$BENCHMARK/campaign/aggregate_report.py"
+          cp "$reporter" "$RUNNER_TEMP/aggregate_report.py"
+          git restore "$reporter"
+          set +e
+          python -m pytest -q --tb=short "$BENCHMARK/tests/test_campaign_matrix_report.py" \
+            -k 'fractional or boolean or zero or negative' > "$RUNNER_TEMP/baseline.txt" 2>&1
+          status=$?
+          set -e
+          cp "$RUNNER_TEMP/aggregate_report.py" "$reporter"
+          cat "$RUNNER_TEMP/baseline.txt"
+          test "$status" -eq 1
+          grep -q '4 failed' "$RUNNER_TEMP/baseline.txt"
+          for case in fractional boolean zero negative; do
+            grep -Fq "test_matrix_report_cli_preserves_incomplete_evidence[$case]" "$RUNNER_TEMP/baseline.txt"
+          done
+      - name: Test all campaign suites with the candidate
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          python -m pytest -q "$BENCHMARK"/tests/test_campaign_*.py
