@@ -1,0 +1,73 @@
+name: Verify compatible IvorySQL Oracle fixes
+on:
+  push:
+    branches: [ci/ivorysql-combined-regressions-20261122]
+permissions:
+  contents: read
+
+jobs:
+  oracle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 24
+    env:
+      IVORY_BASE: 475ab1956568da0e6e796902bf6e13a916396edd
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: validation
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: IvorySQL/IvorySQL
+          ref: 475ab1956568da0e6e796902bf6e13a916396edd
+          path: source
+          persist-credentials: false
+      - name: Combine the three reviewed pull request heads
+        working-directory: source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$IVORY_BASE"
+          for entry in \
+            '3250:6af2d7ac89d8b52f892afb080c458988022d1b56' \
+            '3251:2e92e47de2c8a3fa03ae45f83381a2200011d8b0' \
+            '3283:02c3f53ed1eefe1c0316edf989eb574cea0b1a0c'; do
+            pr="${entry%%:*}"
+            head="${entry#*:}"
+            git fetch --no-tags --depth=1 origin "refs/pull/$pr/head"
+            test "$(git rev-parse FETCH_HEAD)" = "$head"
+            git diff --binary "$IVORY_BASE" "$head" | git apply --index --whitespace=error
+            while IFS= read -r path; do
+              test "$(git hash-object "$path")" = "$(git rev-parse "$head:$path")"
+            done < <(git diff --name-only "$IVORY_BASE" "$head")
+            printf '#%s applied at %s\n' "$pr" "$head"
+          done
+          git diff --cached --check
+          printf 'Combined source tree: %s\n' "$(git write-tree)"
+          printf 'IVORY_PREFIX=%s\n' "$RUNNER_TEMP/ivory-combined" >> "$GITHUB_ENV"
+      - name: Build and install the assertion-enabled server
+        working-directory: source
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y bison flex libreadline-dev zlib1g-dev uuid-dev libicu-dev libxml2-dev libxslt1-dev libcurl4-openssl-dev
+          ./configure --prefix="$IVORY_PREFIX" --enable-cassert --with-uuid=e2fs --with-icu --with-libxml --with-libxslt
+          make -j"$(nproc)" world-bin > "$RUNNER_TEMP/build.log" 2>&1 || { tail -n 90 "$RUNNER_TEMP/build.log"; exit 1; }
+          make -j"$(nproc)" install-world-bin > "$RUNNER_TEMP/install.log" 2>&1 || { tail -n 90 "$RUNNER_TEMP/install.log"; exit 1; }
+          make -j"$(nproc)" install >> "$RUNNER_TEMP/install.log" 2>&1 || { tail -n 90 "$RUNNER_TEMP/install.log"; exit 1; }
+      - name: Verify reference columns and scheduler calendars
+        working-directory: source
+        run: |
+          set -euo pipefail
+          make -j1 oracle-check-tests TESTS=ref_type > "$RUNNER_TEMP/ref.log" 2>&1 || {
+            tail -n 60 "$RUNNER_TEMP/ref.log"; cat src/oracle_test/regress/regression.diffs; exit 1;
+          }
+          grep -E '^ok .*ref_type|All .* tests passed' "$RUNNER_TEMP/ref.log"
+          grep -F 'ref_reg_holder|person|-1' src/oracle_test/regress/results/ref_type.out
+          grep -F 'ref_reg_people|parent|-1' src/oracle_test/regress/results/ref_type.out
+          make -j1 -C contrib/ivorysql_ora oracle-check ORA_REGRESS=dbms_scheduler > "$RUNNER_TEMP/scheduler.log" 2>&1 || {
+            tail -n 60 "$RUNNER_TEMP/scheduler.log"; cat contrib/ivorysql_ora/regression.diffs; exit 1;
+          }
+          grep -E '^ok .*dbms_scheduler|All .* tests passed' "$RUNNER_TEMP/scheduler.log"
+      - name: Start two concurrent Oracle regression instances
+        working-directory: source
+        run: python3 ../validation/validation/ivorysql-combined/verify_concurrent.py
