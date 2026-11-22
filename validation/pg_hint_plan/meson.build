@@ -16,7 +16,7 @@ endif
 
 pg_hint_plan = shared_module('pg_hint_plan',
   pg_hint_plan_sources,
-  include_directories: include_directories('.'),
+  include_directories: include_directories('.', '../../src/pl/plpgsql/src'),
   kwargs: contrib_mod_args,
 )
 contrib_targets += pg_hint_plan
