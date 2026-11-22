@@ -1,0 +1,64 @@
+name: Verify the combined AgentSight reporting fixes
+on:
+  push:
+    branches: [ci/sight-reporting-combined-20261122]
+permissions:
+  contents: read
+
+jobs:
+  reporting:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      UPSTREAM: 0ae92f31b404f5271a6719f7dd0afbac5cb3fc84
+      BENCHMARK: src/agentsight/scripts/benchmark
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11.6'
+      - name: Apply the exact reporting fixes to current main
+        run: |
+          set -euo pipefail
+          git init source
+          git -C source remote add origin https://github.com/agentic-os-org/ANOLISA.git
+          git -C source config remote.origin.promisor true
+          git -C source config remote.origin.partialclonefilter blob:none
+          git -C source sparse-checkout set "$BENCHMARK"
+          git -C source fetch --no-tags --depth=1 --filter=blob:none origin "$UPSTREAM"
+          test "$(git -C source rev-parse FETCH_HEAD)" = "$UPSTREAM"
+          git -C source checkout --detach FETCH_HEAD
+          for entry in \
+            '10449:49ed2f63e266938a147ac9818363ba4d102279ae' \
+            '10450:0c7f29ffb1c94dd68a2fd5ad17120448de7be888' \
+            '10451:ccc264e3865eda13f71c5313f66d005f4567eb8a' \
+            '10452:e56b6a5eae41a19807192a3694fac49ed8b3a7cb' \
+            '10453:a38d569a249f6241714803306119c2a23526fdc5'; do
+            pr="${entry%%:*}"
+            head="${entry#*:}"
+            git -C source fetch --no-tags --depth=2 --filter=blob:none origin "refs/pull/$pr/head"
+            test "$(git -C source rev-parse FETCH_HEAD)" = "$head"
+            files="$(git -C source diff-tree --no-commit-id --name-only -r "$head")"
+            test -n "$files"
+            if printf '%s\n' "$files" | grep -v "^$BENCHMARK/"; then
+              echo "Unexpected path in #$pr"
+              exit 1
+            fi
+            git -C source cherry-pick --no-commit "$head"
+            printf '#%s applied at %s\n' "$pr" "$head"
+          done
+          git -C source diff --cached --check
+          printf 'Combined source tree: %s\n' "$(git -C source write-tree)"
+      - name: Test campaign, counter, and resource reports
+        working-directory: source/src/agentsight/scripts/benchmark
+        run: |
+          set -euo pipefail
+          python -m pip install -r requirements.txt
+          python -m pytest -q \
+            tests/test_campaign_*.py \
+            tests/test_counter_deltas.py \
+            tests/test_plot_reports.py \
+            tests/test_report_load_evidence.py \
+            tests/test_resource_cpu_intervals.py \
+            tests/test_resource_report.py \
+            tests/test_resource_trend_clock.py
