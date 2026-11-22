@@ -24,7 +24,7 @@ jobs:
           git -C source remote add origin https://github.com/agentic-os-org/ANOLISA.git
           git -C source config remote.origin.promisor true
           git -C source config remote.origin.partialclonefilter blob:none
-          git -C source sparse-checkout set "$BENCHMARK"
+          git -C source sparse-checkout set --no-cone "/$BENCHMARK/" '/.github/workflows/ci.yaml'
           git -C source fetch --no-tags --depth=1 --filter=blob:none origin "$UPSTREAM"
           test "$(git -C source rev-parse FETCH_HEAD)" = "$UPSTREAM"
           git -C source checkout --detach FETCH_HEAD
