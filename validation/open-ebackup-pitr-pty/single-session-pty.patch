@@ -1,0 +1,99 @@
+diff --git a/src/AppPlugins/database/applications/mysql/src/service/restore/log_restore.py b/src/AppPlugins/database/applications/mysql/src/service/restore/log_restore.py
+index ef28a57..39f6b8e 100755
+--- a/src/AppPlugins/database/applications/mysql/src/service/restore/log_restore.py
++++ b/src/AppPlugins/database/applications/mysql/src/service/restore/log_restore.py
+@@ -12,6 +12,7 @@
+ #
+ 
+ import os
++from tempfile import NamedTemporaryFile
+ 
+ from common.common import without_op_library
+ from common.const import CMDResultInt
+@@ -68,24 +69,46 @@ class LogRestore(BaseService):
+         if not ret:
+             log.error(f"get restore_files error,{self.get_log_comm()}")
+             raise ErrCodeException(MySQLErrorCode.SYSTEM_ERROR)
+-        database_cmd = f"--database={self.database}" if self.database else ""
+-        skip_gtids_cmd = self.get_skip_gtids_cmd()
+-        for index, file in enumerate(restore_files):
+-            # binlog_position只对起始binlog文件有效，后续binlog文件必须从文件头开始回放，
+-            # 否则每个后续文件开头位置小于start_position的事件都会被跳过，导致恢复后数据丢失
+-            start_position_cmd = f"--start-position={start_position}" if index == 0 else ""
+-            restore_cmd = f"mysqlbinlog --no-defaults {database_cmd} {skip_gtids_cmd} \"{file}\" " \
+-                          f"--disable-log-bin {start_position_cmd} " \
+-                          f"--stop-datetime='{stop_datetime}' | mysql -u{self.param.user} -P{self.param.port} " \
+-                          f"-h{self.param.mysql_ip} -p"
+-            # 使用pipefail使mysqlbinlog的失败也能传导为整个管道的退出码，避免误报成功
+-            restore_exec_cmd = f"/bin/bash -c \"set -o pipefail; {restore_cmd}\""
+-            # 通过pexpect交互式输入密码，避免密码以明文形式暴露在进程命令行参数中
+-            ret, out_str = exec_cmd_spawn(restore_exec_cmd, self.param.pass_wd)
+-            log.info(f"ret:{ret}, out_str:{out_str}")
+-            if ret != CMDResultInt.SUCCESS.value:
+-                log.error(f"restore log failed,output:{out_str},{self.get_log_comm()}")
+-                raise ErrCodeException(MySQLErrorCode.SYSTEM_ERROR)
++        if not restore_files:
++            log.info(f"no binlog files to replay,{self.get_log_comm()}")
++            return
++        if os.path.basename(restore_files[0]) != os.path.basename(binlog_file):
++            log.error(f"starting binlog {binlog_file} is unavailable,{self.get_log_comm()}")
++            raise ErrCodeException(MySQLErrorCode.SYSTEM_ERROR)
++
++        decoder_options = [
++            "--no-defaults",
++            "--disable-log-bin",
++            f"--start-position={start_position}",
++            f"--stop-datetime={stop_datetime}",
++        ]
++        if self.database:
++            decoder_options.append(f"--database={self.database}")
++        skip_gtids = self.get_skip_gtids_cmd()
++        if skip_gtids:
++            decoder_options.append(skip_gtids)
++
++        # Keep one client session across log rotations so temporary tables survive.
++        restore_cmd = (
++            "files=(); while IFS= read -r -d '' file; do "
++            'files+=("$file"); done < "$1" || exit $?; '
++            'user=$2 port=$3 host=$4; shift 4; '
++            'mysqlbinlog "$@" "${files[@]}" < /dev/null | '
++            'mysql -u "$user" -P "$port" -h "$host" -p'
++        )
++        with NamedTemporaryFile(prefix="open-ebackup-pitr-") as file_list:
++            for file in restore_files:
++                file_list.write(os.fsencode(file) + b"\0")
++            file_list.flush()
++            arguments = [
++                "-o", "pipefail", "-c", restore_cmd, "open-ebackup-pitr", file_list.name,
++                self.param.user, str(self.param.port), self.param.mysql_ip, *decoder_options,
++            ]
++            ret, out_str = exec_cmd_spawn("/bin/bash", self.param.pass_wd, arguments=arguments)
++        log.info(f"ret:{ret}, out_str:{out_str}")
++        if ret != CMDResultInt.SUCCESS.value:
++            log.error(f"restore log failed,output:{out_str},{self.get_log_comm()}")
++            raise ErrCodeException(MySQLErrorCode.SYSTEM_ERROR)
+         log.info(f"restore log success,{self.get_log_comm()}")
+ 
+     def get_log_restore_files(self, copy_end_timestamp, start_binlog_name):
+diff --git a/src/AppPlugins/database/applications/mysql/src/utils/common_func.py b/src/AppPlugins/database/applications/mysql/src/utils/common_func.py
+index bc111e0..03aab51 100755
+--- a/src/AppPlugins/database/applications/mysql/src/utils/common_func.py
++++ b/src/AppPlugins/database/applications/mysql/src/utils/common_func.py
+@@ -481,7 +481,7 @@ def get_value(param, key, default_value=""):
+     return default_value
+ 
+ 
+-def exec_cmd_spawn(cmd, passwd, library_path="", xtrabackup_cmd=False):
++def exec_cmd_spawn(cmd, passwd, library_path="", xtrabackup_cmd=False, *, arguments=None):
+     child = None
+     try:
+         if xtrabackup_cmd and library_path:
+@@ -489,7 +489,7 @@ def exec_cmd_spawn(cmd, passwd, library_path="", xtrabackup_cmd=False):
+         if not xtrabackup_cmd:
+             os.environ['LD_LIBRARY_PATH'] = ""
+         log.info(f"library_path:{os.environ.get('LD_LIBRARY_PATH', '')}")
+-        child = pexpect.spawn(cmd, timeout=None, env=(os.environ.copy()))
++        child = pexpect.spawn(cmd, args=arguments or [], timeout=None, env=os.environ.copy())
+     except Exception as exception_str:
+         log.exception(exception_str)
+         log.error(f"Spawn except an exception.")
