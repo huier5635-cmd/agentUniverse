@@ -1,0 +1,33 @@
+name: Verify GitHub Actions resource queue behavior
+on:
+  push:
+    branches: [ci/sight-resource-queue-20261124]
+permissions: {}
+jobs:
+  default-queue:
+    name: Default queue (${{ matrix.job }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    strategy:
+      fail-fast: false
+      matrix:
+        job: [first, second, third]
+    concurrency:
+      group: queue-proof-default-${{ github.run_id }}
+      cancel-in-progress: false
+    steps:
+      - run: sleep 20
+  retained-queue:
+    name: Retained queue (${{ matrix.job }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    strategy:
+      fail-fast: false
+      matrix:
+        job: [first, second, third]
+    concurrency:
+      group: queue-proof-retained-${{ github.run_id }}
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - run: sleep 20
