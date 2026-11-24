@@ -1,0 +1,56 @@
+name: Verify Tokenless piped confirmation and redirected stdout
+on:
+  push:
+    branches: [ci/tokenless-clear-pipe-20261124]
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    env:
+      PR_HEAD: 5f65e5a878946d9d5ef36e3da387e5951061e759
+      UPSTREAM_BASE: fc3cf6930c8d9efef63618c7928d760f975e056a
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: huier5635-cmd/ANOLISA
+          ref: '5f65e5a878946d9d5ef36e3da387e5951061e759'
+          fetch-depth: 2
+          path: source
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.91.0'
+      - name: Compare the original and approved CLI with a private test database
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PR_HEAD"
+          test "$(git rev-parse HEAD^)" = "$UPSTREAM_BASE"
+          test_source=src/tokenless/crates/tokenless-cli/tests/cli_integration.rs
+          test_name=stats_clear_rejects_piped_confirmation_with_redirected_output
+          fixture="$GITHUB_WORKSPACE/validation/piped-approval-validation.rs"
+          bash src/tokenless/packaging/build/setup-rtk.sh
+          git checkout --detach "$UPSTREAM_BASE"
+          printf '\n' >> "$test_source"
+          cat "$fixture" >> "$test_source"
+          cd src/tokenless
+          set +e
+          cargo test --locked -p tokenless-cli --test cli_integration "$test_name" -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/redirected-baseline.log"
+          baseline=$?
+          set -e
+          test "$baseline" -eq 101
+          grep -F 'piped yes must preserve the seeded record (status: exit status: 0, stderr: )' "$RUNNER_TEMP/redirected-baseline.log"
+          cd ../..
+          git restore -- "$test_source"
+          git checkout --detach "$PR_HEAD"
+          printf '\n' >> "$test_source"
+          cat "$fixture" >> "$test_source"
+          git diff --check
+          cd src/tokenless
+          cargo test --locked -p tokenless-cli --test cli_integration stats_clear -- --nocapture
