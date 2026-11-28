@@ -1,0 +1,36 @@
+--- a/src/agentsight/packaging/build.mk
++++ b/src/agentsight/packaging/build.mk
+@@ -36,7 +36,9 @@
+ 
+ .PHONY: build-dsh-plugin
+ build-dsh-plugin: ## Build the optional DSH plugin resources
+-	cd dsh-plugin && npm install && npm run build
++	cd dsh-plugin && \
++		npm exec --yes --package=pnpm@11.25.0 -- pnpm install --frozen-lockfile --ignore-scripts && \
++		npm run build
+ 
+ .PHONY: build-mac
+ build-mac: build-frontend ## Build macOS local viewer (serve only; no eBPF)
+--- a/src/agentsight/dsh-plugin/README.md
++++ b/src/agentsight/dsh-plugin/README.md
+@@ -4,7 +4,7 @@
+ 
+ ## Install
+ 
+-From the monorepo checkout (local path):
++From the monorepo checkout (local path), use Node.js 22.13 or later and pnpm 11.25.0:
+ 
+ ```bash
+ cd src/agentsight/dsh-plugin
+@@ -26,6 +26,11 @@
+ 
+ ## Development
+ 
++`make -C src/agentsight build-dsh-plugin` uses the same lockfile via pnpm 11.25.0.
++The aggregate `make build` and RPM build use this target.
++
++To build from within this directory:
++
+ ```bash
+ pnpm install --frozen-lockfile --ignore-scripts
+ pnpm run build

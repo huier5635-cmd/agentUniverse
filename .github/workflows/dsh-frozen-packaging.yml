@@ -1,0 +1,57 @@
+name: DSH frozen packaging validation
+
+on: push
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: validation
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: huier5635-cmd/ANOLISA
+          ref: 6a8dc19ba367c8d01930be2084dbbf07cf58e4c6
+          path: source
+          sparse-checkout: src/agentsight
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+      - name: Verify the shared Make target builds and tests the plugin
+        shell: bash
+        run: |
+          test "$(git -C source rev-parse HEAD)" = 6a8dc19ba367c8d01930be2084dbbf07cf58e4c6
+          patch="$PWD/validation/validation/packaging.patch"
+          git -C source apply --check "$patch"
+          git -C source apply "$patch"
+          plugin=source/src/agentsight/dsh-plugin
+          lock="$plugin/pnpm-lock.yaml"
+          hash="$(sha256sum "$lock")"
+          test "${hash%% *}" = 176df20351542935ea3374e1beaec2b8a86bc59fe6d8575f0b3d08fc4d20a3e3
+          test ! -d "$plugin/node_modules"
+          make -C source/src/agentsight build-dsh-plugin
+          test -s "$plugin/lib/index.js"
+          test -s "$plugin/lib/index.d.ts"
+          npm --prefix "$plugin" test
+          test ! -e "$plugin/package-lock.json"
+          test "$hash" = "$(sha256sum "$lock")"
+      - name: Verify the shared Make target rejects a stale lockfile
+        shell: bash
+        run: |
+          plugin=source/src/agentsight/dsh-plugin
+          lock="$plugin/pnpm-lock.yaml"
+          hash="$(sha256sum "$lock")"
+          node -e 'const fs = require("node:fs"); const path = process.argv[1]; const pkg = JSON.parse(fs.readFileSync(path)); pkg.devDependencies.typescript = "5.5.4"; fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + "\n");' "$plugin/package.json"
+          output="$RUNNER_TEMP/dsh-stale.log"
+          status=0
+          make -C source/src/agentsight build-dsh-plugin > "$output" 2>&1 || status=$?
+          cat "$output"
+          test "$status" -ne 0
+          grep -F ERR_PNPM_OUTDATED_LOCKFILE "$output"
+          test "$hash" = "$(sha256sum "$lock")"
