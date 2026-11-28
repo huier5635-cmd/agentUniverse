@@ -1,0 +1,46 @@
+name: Real MySQL and XtraBackup regression for open-eBackup
+on:
+  push:
+    branches: [ci/open-ebackup-mysql-real-20261128]
+permissions:
+  contents: read
+jobs:
+  backup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    env:
+      MYSQL_IMAGE: mysql:8.4.13@sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902
+      XTRA_IMAGE: percona/percona-xtrabackup:8.4.0-8@sha256:035bb604345d7a492222f28dd8bfc90b88c9ef8480b2c52cbda85f07b385dd48
+      OE_TEST_PASSWORD: ebackup-temporary-test-only
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Extract the two exact upstream launchers
+        shell: bash
+        run: |
+          root="$RUNNER_TEMP/oe-real-clients"
+          mkdir -p "$root"
+          git init --quiet "$root/repo"
+          baseline=96ecbf1228f9e8c8a9baedcc4722ea06f61ea74b
+          candidate=37f02b42de04d2f856b6b0c2c8e4a63f3218d74c
+          file=src/AppPlugins/database/applications/mysql/src/utils/common_func.py
+          git -C "$root/repo" fetch --no-tags --depth=1 --filter=blob:none https://gitcode.com/eBackup/open-eBackup.git "$baseline"
+          test "$(git -C "$root/repo" rev-parse "$baseline:$file")" = bc111e0ec2f0895ba170444795879b32560d74df
+          git -C "$root/repo" show "$baseline:$file" > "$root/baseline.py"
+          git -C "$root/repo" fetch --no-tags --depth=1 --filter=blob:none https://gitcode.com/huier325/open-eBackup.git "$candidate"
+          test "$(git -C "$root/repo" rev-parse "$candidate:$file")" = 2fc4face90d0143b6e752c0c1b579ecdf2a1d610
+          git -C "$root/repo" show "$candidate:$file" > "$root/candidate.py"
+          python3 -m venv "$root/venv"
+          "$root/venv/bin/python" -m pip install pexpect==4.9.0 ptyprocess==0.7.0
+      - name: Compare real commands and restore the candidate backup
+        shell: bash
+        run: |
+          root="$RUNNER_TEMP/oe-real-clients"
+          bash validation/verify.sh "$root" "$root/venv/bin/python" validation/verify_clients.py
+      - name: Clean up fixture containers and volumes
+        if: always()
+        shell: bash
+        run: |
+          docker rm -f oe-restored oe-xtra oe-src 2>/dev/null || true
+          docker volume rm oe-src-data oe-src-socket oe-restore-data oe-backup 2>/dev/null || true
