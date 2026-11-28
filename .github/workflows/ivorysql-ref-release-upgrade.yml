@@ -1,0 +1,81 @@
+name: IvorySQL 5.6 REF upgrade through both listeners
+on:
+  push:
+    branches: [ci/ivorysql-ref-release-upgrade-20261128]
+permissions:
+  contents: read
+jobs:
+  cross-major:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 28
+    env:
+      OLD: 74c405c9c355a8167322b3749bbc1b982a0eb0c0
+      BASE: 475ab1956568da0e6e796902bf6e13a916396edd
+      UPGRADE_HEAD: 4533ea907dfadb2a1711f35fddde488ac3b6b18d
+      REF_HEAD: 02c3f53ed1eefe1c0316edf989eb574cea0b1a0c
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: validation
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: IvorySQL/IvorySQL
+          ref: 74c405c9c355a8167322b3749bbc1b982a0eb0c0
+          path: released
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: IvorySQL/IvorySQL
+          ref: 4533ea907dfadb2a1711f35fddde488ac3b6b18d
+          path: candidate
+          persist-credentials: false
+      - name: Verify official sources and build dependencies
+        shell: bash
+        run: |
+          test "$(git -C released rev-parse HEAD)" = "$OLD"
+          test "$(git -C candidate rev-parse HEAD)" = "$UPGRADE_HEAD"
+          git -C candidate fetch --no-tags --depth=1 origin "$BASE" refs/pull/3283/head:refs/heads/ref-head
+          test "$(git -C candidate rev-parse ref-head)" = "$REF_HEAD"
+          git -C candidate diff --binary "$BASE" "$REF_HEAD" > "$RUNNER_TEMP/ref.patch"
+          git -C candidate apply --index --whitespace=error "$RUNNER_TEMP/ref.patch"
+          git -C candidate diff --cached --check
+          test "$(git -C candidate write-tree)" = 9912e5cba3cad44b229086b49a1c5985acba0808
+          cp validation/validation/verify-cross-major.pl candidate/src/bin/pg_upgrade/t/oracle/003_ref_cross_major.pl
+          sudo apt-get update -q
+          sudo apt-get install -y bison flex libreadline-dev zlib1g-dev uuid-dev libicu-dev libxml2-dev libxslt1-dev libcurl4-openssl-dev libipc-run-perl
+          printf 'IVORY_OLD_PREFIX=%s\nIVORY_NEW_PREFIX=%s\n' "$RUNNER_TEMP/ivory-release" "$RUNNER_TEMP/ivory-candidate" >> "$GITHUB_ENV"
+      - name: Build the 5.6 release and assertion-enabled 19beta1 candidate
+        shell: bash
+        run: |
+          flags=(--with-uuid=e2fs --with-icu --with-libxml --with-libxslt)
+          (
+            cd released
+            ./configure --prefix="$IVORY_OLD_PREFIX" "${flags[@]}"
+            make -j"$(nproc)" world-bin
+            make -j"$(nproc)" install-world-bin
+            make -j"$(nproc)" install
+          ) > "$RUNNER_TEMP/released-build.log" 2>&1 || { tail -n 100 "$RUNNER_TEMP/released-build.log"; exit 1; }
+          "$IVORY_OLD_PREFIX/bin/pg_config" --version
+          (
+            cd candidate
+            ./configure --prefix="$IVORY_NEW_PREFIX" --enable-cassert --enable-tap-tests "${flags[@]}"
+            make -j"$(nproc)" world-bin
+            make -j"$(nproc)" install-world-bin
+            make -j"$(nproc)" install
+          ) > "$RUNNER_TEMP/candidate-build.log" 2>&1 || { tail -n 100 "$RUNNER_TEMP/candidate-build.log"; exit 1; }
+          "$IVORY_NEW_PREFIX/bin/pg_config" --version
+      - name: Upgrade real Oracle-mode data from the release through both ports
+        working-directory: candidate
+        shell: bash
+        run: |
+          make -C src/bin/pg_upgrade oracle-installcheck PROVE_TESTS=t/oracle/003_ref_cross_major.pl PROVE_FLAGS=-v
+      - name: Print focused diagnostics on failure
+        if: failure()
+        working-directory: candidate
+        shell: bash
+        run: |
+          dir=src/bin/pg_upgrade/tmp_check/log
+          if test -d "$dir"; then
+            find "$dir" -maxdepth 1 -type f -name 'regress_log*' -print -exec tail -n 90 '{}' ';'
+          fi
