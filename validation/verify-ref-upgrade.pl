@@ -41,7 +41,7 @@ my $type_oids = q{
 	WHERE t.oid = 'person_t'::regtype OR t.typrefbase = 'person_t'::regtype
 	ORDER BY t.oid
 };
-is($old->safe_psql('postgres', $typmod), "0\n0", 'legacy REF typmods');
+is($old->safe_psql('postgres', $typmod), "-1\n-1", 'stored REF typmods before upgrade');
 my $before = $old->safe_psql('postgres', $type_oids);
 is(scalar(split /\n/, $before), 2, 'old object and REF domain exist');
 $old->stop;
@@ -80,7 +80,7 @@ else
 	command_ok(\@upgrade, 'upgrade with #3270 and #3283 through Oracle port');
 	$new->start;
 	is($new->safe_psql('postgres', $typmod), "-1\n-1",
-		'upgrade normalizes both REF typmods');
+		'upgrade preserves both stored REF typmods');
 	is($new->safe_psql('postgres', $type_oids), $before,
 		'object and REF domain OIDs survive');
 	is($new->safe_psql('postgres', q{
