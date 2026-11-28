@@ -1,0 +1,48 @@
+name: Verify open-eBackup Traefik control-plane placement
+on:
+  push:
+    branches: [ci/open-ebackup-traefik-placement-20261128]
+permissions:
+  contents: read
+jobs:
+  kind:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 14
+    env:
+      PROPOSAL: 8ff7b46ab023a698403cf18acf8e9de5be63dabe
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: validation
+          persist-credentials: false
+      - name: Fetch the exact PR guide and pinned Kubernetes tools
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/oe-placement" "$RUNNER_TEMP/oe-bin"
+          cd "$RUNNER_TEMP/oe-placement"
+          git init --quiet source
+          git -C source fetch --no-tags --depth=1 --filter=blob:none https://gitcode.com/huier325/open-eBackup.git "$PROPOSAL"
+          guide='doc/quick_guide/快速入门.md'
+          test "$(git -C source rev-parse "$PROPOSAL:$guide")" = 02311f6301c740b3793277e167c2561dc25a3602
+          git -C source show "$PROPOSAL:$guide" > original.md
+          curl --fail --silent --show-error --location --retry 3 \
+            https://codeload.github.com/traefik/traefik-helm-chart/tar.gz/refs/tags/v27.0.2 -o chart.tar.gz
+          printf '%s\n' '0ac8958c5d8218f181c39c766f708de29d1fe134f06e27105810b154823d1c0b  chart.tar.gz' | sha256sum --check
+          tar -xzf chart.tar.gz
+          cd "$RUNNER_TEMP/oe-bin"
+          kind_release=https://github.com/kubernetes-sigs/kind/releases/download/v0.27.0
+          curl --fail --silent --show-error --location --retry 3 "$kind_release/kind-linux-amd64" -o kind-linux-amd64
+          curl --fail --silent --show-error --location --retry 3 "$kind_release/kind-linux-amd64.sha256sum" -o kind.sha256
+          sha256sum --check kind.sha256
+          mv kind-linux-amd64 kind
+          kubectl_release=https://dl.k8s.io/release/v1.32.2/bin/linux/amd64
+          curl --fail --silent --show-error --location --retry 3 "$kubectl_release/kubectl" -o kubectl
+          curl --fail --silent --show-error --location --retry 3 "$kubectl_release/kubectl.sha256" -o kubectl.sha256
+          printf '%s  kubectl\n' "$(cat kubectl.sha256)" | sha256sum --check
+          chmod +x kind kubectl
+          echo "$RUNNER_TEMP/oe-bin" >> "$GITHUB_PATH"
+      - name: Exercise both control-plane layouts and the legacy ingress route
+        shell: bash
+        run: |
+          root="$RUNNER_TEMP/oe-placement"
+          bash validation/validation/verify-placement.sh "$root/original.md" "$root"
