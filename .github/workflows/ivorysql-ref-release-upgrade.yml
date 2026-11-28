@@ -1,4 +1,4 @@
-name: IvorySQL 5.6 REF upgrade through both listeners
+name: IvorySQL 5.6 upgrade and destination REF checks
 on:
   push:
     branches: [ci/ivorysql-ref-release-upgrade-20261128]
