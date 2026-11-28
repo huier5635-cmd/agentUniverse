@@ -1,0 +1,73 @@
+name: Verify the IvorySQL REF fixture through pg_upgrade
+on:
+  push:
+    branches: [ci/ivorysql-ref-upgrade-20261128]
+permissions:
+  contents: read
+jobs:
+  upgrade:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 26
+    env:
+      UPGRADE_HEAD: 4533ea907dfadb2a1711f35fddde488ac3b6b18d
+      REF_HEAD: 02c3f53ed1eefe1c0316edf989eb574cea0b1a0c
+      BASE: 475ab1956568da0e6e796902bf6e13a916396edd
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: validation
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: IvorySQL/IvorySQL
+          ref: '4533ea907dfadb2a1711f35fddde488ac3b6b18d'
+          path: source
+          persist-credentials: false
+      - name: Pin both review heads and install build dependencies
+        working-directory: source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$UPGRADE_HEAD"
+          git fetch --no-tags --depth=1 origin "$BASE"
+          test "$(git rev-parse FETCH_HEAD)" = "$BASE"
+          git fetch --no-tags --depth=1 origin refs/pull/3283/head
+          test "$(git rev-parse FETCH_HEAD)" = "$REF_HEAD"
+          git diff --binary "$BASE" "$REF_HEAD" > "$RUNNER_TEMP/ref-typmod.patch"
+          git apply --check "$RUNNER_TEMP/ref-typmod.patch"
+          cp ../validation/validation/verify-ref-upgrade.pl src/bin/pg_upgrade/t/oracle/003_ref_typmod_upgrade.pl
+          sudo apt-get update -q
+          sudo apt-get install -y bison flex libreadline-dev zlib1g-dev uuid-dev libicu-dev libxml2-dev libxslt1-dev libcurl4-openssl-dev libipc-run-perl
+          printf 'IVORY_OLD_PREFIX=%s\nIVORY_COMBINED_PREFIX=%s\n' \
+            "$RUNNER_TEMP/ivory-old" "$RUNNER_TEMP/ivory-combined" >> "$GITHUB_ENV"
+      - name: Confirm the restore mismatch with #3270 alone
+        working-directory: source
+        run: |
+          set -euo pipefail
+          ./configure --prefix="$IVORY_OLD_PREFIX" --enable-cassert --enable-tap-tests --with-uuid=e2fs --with-icu --with-libxml --with-libxslt
+          make -j"$(nproc)" world-bin > "$RUNNER_TEMP/old-build.log" 2>&1 || { tail -n 90 "$RUNNER_TEMP/old-build.log"; exit 1; }
+          make -j"$(nproc)" install-world-bin > "$RUNNER_TEMP/old-install.log" 2>&1 || { tail -n 90 "$RUNNER_TEMP/old-install.log"; exit 1; }
+          test "$( "$IVORY_OLD_PREFIX/bin/pg_config" --bindir )" = "$IVORY_OLD_PREFIX/bin"
+          IVORY_NEW_PREFIX="$IVORY_OLD_PREFIX" IVORY_REF_UPGRADE_MODE=baseline \
+            make -C src/bin/pg_upgrade oracle-installcheck PROVE_TESTS=t/oracle/003_ref_typmod_upgrade.pl PROVE_FLAGS=-v
+      - name: Upgrade from the same old binary to the combined build
+        working-directory: source
+        run: |
+          set -euo pipefail
+          git apply --index --whitespace=error "$RUNNER_TEMP/ref-typmod.patch"
+          git diff --cached --check
+          test "$(git diff --cached --name-only | wc -l | tr -d ' ')" = 3
+          printf 'Combined tree %s\n' "$(git write-tree)"
+          ./configure --prefix="$IVORY_COMBINED_PREFIX" --enable-cassert --enable-tap-tests --with-uuid=e2fs --with-icu --with-libxml --with-libxslt
+          make -j"$(nproc)" world-bin > "$RUNNER_TEMP/combined-build.log" 2>&1 || { tail -n 90 "$RUNNER_TEMP/combined-build.log"; exit 1; }
+          make -j"$(nproc)" install-world-bin > "$RUNNER_TEMP/combined-install.log" 2>&1 || { tail -n 90 "$RUNNER_TEMP/combined-install.log"; exit 1; }
+          test "$( "$IVORY_COMBINED_PREFIX/bin/pg_config" --bindir )" = "$IVORY_COMBINED_PREFIX/bin"
+          IVORY_NEW_PREFIX="$IVORY_COMBINED_PREFIX" IVORY_REF_UPGRADE_MODE=combined \
+            make -C src/bin/pg_upgrade oracle-installcheck PROVE_TESTS=t/oracle/003_ref_typmod_upgrade.pl PROVE_FLAGS=-v
+      - name: Print TAP diagnostics on failure
+        if: failure()
+        working-directory: source
+        run: |
+          dir=src/bin/pg_upgrade/tmp_check/log
+          if test -d "$dir"; then
+            find "$dir" -maxdepth 1 -type f -name 'regress_log*' -print -exec tail -n 80 '{}' ';'
+          fi
