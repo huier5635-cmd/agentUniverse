@@ -37,7 +37,7 @@ jobs:
           test ! -d "$plugin/node_modules"
           make -C source/src/agentsight build-dsh-plugin
           test -s "$plugin/lib/index.js"
-          test -s "$plugin/lib/index.d.ts"
+          test -s "$plugin/lib/types/index.d.ts"
           npm --prefix "$plugin" test
           test ! -e "$plugin/package-lock.json"
           test "$hash" = "$(sha256sum "$lock")"
