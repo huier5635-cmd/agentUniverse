@@ -42,3 +42,29 @@ fi
 grep -m 1 -F 'no matches for kind "PodSecurityPolicy" in version "policy/v1beta1"' full-install.log
 if grep -F 'no matches for kind "IngressRoute"' full-install.log; then exit 1; fi
 echo 'Whole-chart preflight still requires a Kubernetes-compatible PodSecurityPolicy migration.'
+
+base=96ecbf1228f9e8c8a9baedcc4722ea06f61ea74b
+psp_head=bbe8742973f74ab8b41c71fec28600562cec40d1
+psp_source=src/Infrastructure_OM/ci/build/helm/infrastructure/templates/dpa-psp.yaml
+psp_packaged=assembled/charts/infrastructure/templates/dpa-psp.yaml
+git -C source fetch --no-tags --depth=1 --filter=blob:none \
+  https://gitcode.com/Linner-LH/open-eBackup.git "$psp_head"
+test "$(git -C source rev-parse FETCH_HEAD)" = "$psp_head"
+test "$(git -C source diff --name-only "$base" "$psp_head")" = "$psp_source"
+git -C source show "$base:$psp_source" | cmp - "$psp_packaged"
+git -C source show "$psp_head:$psp_source" > "$psp_packaged"
+helm package assembled --destination combined-packages
+combined_chart=combined-packages/databackup-1.0.0.tgz
+helm template master-server "$combined_chart" --kube-version v1.32.2 "${flags[@]}" > combined.yaml
+"$root/venv/bin/python" "$GITHUB_WORKSPACE/validation/extract_gateway.py" \
+  combined.yaml combined-gateway.yaml --no-psp
+cmp gateway.yaml combined-gateway.yaml
+if ! helm install master-server "$combined_chart" "${flags[@]}" --dry-run=server --hide-secret \
+    > combined-install.log 2>&1; then
+  grep -m 6 -E '^Error:|^WARNING:' combined-install.log || true
+  exit 1
+fi
+grep -Fx 'NAME: master-server' combined-install.log
+grep -Fx 'NAMESPACE: dpa' combined-install.log
+test "$(helm -n dpa list --short | wc -l)" -eq 0
+echo 'The existing PSP compatibility PR and the documented CRDs pass full Helm server preflight together.'

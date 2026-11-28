@@ -6,7 +6,8 @@ import sys
 import yaml
 
 
-rendered, gateway = map(Path, sys.argv[1:])
+rendered, gateway = map(Path, sys.argv[1:3])
+expect_psp = len(sys.argv) == 3 or sys.argv[3] != "--no-psp"
 documents = [item for item in yaml.safe_load_all(rendered.read_text(encoding="utf-8")) if item]
 legacy = [item for item in documents if item["apiVersion"] == "traefik.containo.us/v1alpha1"]
 counts = Counter(item["kind"] for item in legacy)
@@ -15,10 +16,11 @@ assert counts == {
 }, counts
 names = {(item["kind"], item["metadata"]["namespace"], item["metadata"]["name"]) for item in legacy}
 assert len(names) == len(legacy) and {name[1] for name in names} == {"dpa"}
-assert any(
+has_psp = any(
     item["kind"] == "PodSecurityPolicy" and item["apiVersion"] == "policy/v1beta1"
     for item in documents
 )
+assert has_psp == expect_psp, (has_psp, expect_psp)
 print(f"Rendered {len(documents)} resources including {len(legacy)} distinct legacy Traefik objects.")
 print("Legacy object types:", dict(sorted(counts.items())))
 gateway.write_text(yaml.safe_dump_all(legacy, sort_keys=False), encoding="utf-8")
