@@ -39,13 +39,14 @@ jobs:
           sudo apt-get install -y bison flex libreadline-dev zlib1g-dev uuid-dev libicu-dev libxml2-dev libxslt1-dev libcurl4-openssl-dev libipc-run-perl
           printf 'IVORY_OLD_PREFIX=%s\nIVORY_COMBINED_PREFIX=%s\n' \
             "$RUNNER_TEMP/ivory-old" "$RUNNER_TEMP/ivory-combined" >> "$GITHUB_ENV"
-      - name: Confirm the restore mismatch with #3270 alone
+      - name: Confirm the restore mismatch with the upgrade patch alone
         working-directory: source
         run: |
           set -euo pipefail
           ./configure --prefix="$IVORY_OLD_PREFIX" --enable-cassert --enable-tap-tests --with-uuid=e2fs --with-icu --with-libxml --with-libxslt
           make -j"$(nproc)" world-bin > "$RUNNER_TEMP/old-build.log" 2>&1 || { tail -n 90 "$RUNNER_TEMP/old-build.log"; exit 1; }
           make -j"$(nproc)" install-world-bin > "$RUNNER_TEMP/old-install.log" 2>&1 || { tail -n 90 "$RUNNER_TEMP/old-install.log"; exit 1; }
+          make -j"$(nproc)" install >> "$RUNNER_TEMP/old-install.log" 2>&1 || { tail -n 90 "$RUNNER_TEMP/old-install.log"; exit 1; }
           test "$( "$IVORY_OLD_PREFIX/bin/pg_config" --bindir )" = "$IVORY_OLD_PREFIX/bin"
           IVORY_NEW_PREFIX="$IVORY_OLD_PREFIX" IVORY_REF_UPGRADE_MODE=baseline \
             make -C src/bin/pg_upgrade oracle-installcheck PROVE_TESTS=t/oracle/003_ref_typmod_upgrade.pl PROVE_FLAGS=-v
@@ -60,6 +61,7 @@ jobs:
           ./configure --prefix="$IVORY_COMBINED_PREFIX" --enable-cassert --enable-tap-tests --with-uuid=e2fs --with-icu --with-libxml --with-libxslt
           make -j"$(nproc)" world-bin > "$RUNNER_TEMP/combined-build.log" 2>&1 || { tail -n 90 "$RUNNER_TEMP/combined-build.log"; exit 1; }
           make -j"$(nproc)" install-world-bin > "$RUNNER_TEMP/combined-install.log" 2>&1 || { tail -n 90 "$RUNNER_TEMP/combined-install.log"; exit 1; }
+          make -j"$(nproc)" install >> "$RUNNER_TEMP/combined-install.log" 2>&1 || { tail -n 90 "$RUNNER_TEMP/combined-install.log"; exit 1; }
           test "$( "$IVORY_COMBINED_PREFIX/bin/pg_config" --bindir )" = "$IVORY_COMBINED_PREFIX/bin"
           IVORY_NEW_PREFIX="$IVORY_COMBINED_PREFIX" IVORY_REF_UPGRADE_MODE=combined \
             make -C src/bin/pg_upgrade oracle-installcheck PROVE_TESTS=t/oracle/003_ref_typmod_upgrade.pl PROVE_FLAGS=-v
