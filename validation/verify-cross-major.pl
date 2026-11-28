@@ -2,6 +2,7 @@ use strict;
 use warnings FATAL => 'all';
 
 use File::Find qw(find);
+use IPC::Run ();
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;
@@ -57,6 +58,7 @@ for my $protocol ('oracle', 'postgres')
 {
 	subtest "IvorySQL 5.6 upgrade through $protocol port" => sub
 	{
+		plan tests => 15;
 		my $old = PostgreSQL::Test::Cluster->new("released_$protocol",
 			install_path => $ENV{IVORY_OLD_PREFIX});
 		my $new = PostgreSQL::Test::Cluster->new("candidate_$protocol",
@@ -104,8 +106,11 @@ INSERT INTO migration_rows (label) VALUES ('alpha'), ('beta');
 			'--old-oraport' => $old->oraport, '--new-oraport' => $new->oraport
 		);
 		push @upgrade, '--using-ora-pg' if $protocol eq 'postgres';
-		if (!command_ok(\@upgrade, 'cross-major pg_upgrade completes'))
+		my ($stdout, $stderr);
+		my $ok = IPC::Run::run \@upgrade, '>' => \$stdout, '2>' => \$stderr;
+		if (!ok($ok, 'cross-major pg_upgrade completes'))
 		{
+			diag("$stdout\n$stderr");
 			log_restore_error($new);
 			return;
 		}
