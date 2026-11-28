@@ -41,6 +41,8 @@ jobs:
           npm --prefix "$plugin" test
           test ! -e "$plugin/package-lock.json"
           test "$hash" = "$(sha256sum "$lock")"
+      - name: Verify all AgentSight delivery tests
+        run: python3 source/src/agentsight/scripts/benchmark/tests/test_delivery.py -q
       - name: Verify the shared Make target rejects a stale lockfile
         shell: bash
         run: |
